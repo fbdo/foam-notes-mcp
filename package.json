@@ -1,0 +1,112 @@
+{
+  "name": "foam-notes-mcp",
+  "version": "0.0.1",
+  "description": "Local-first MCP server for Foam-style Markdown vaults: keyword + graph + semantic search over wikilinks, backlinks, tasks, and frontmatter.",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "foam-notes-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fbdo/foam-notes-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fbdo/foam-notes-mcp/issues"
+  },
+  "homepage": "https://github.com/fbdo/foam-notes-mcp#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "foam",
+    "markdown",
+    "notes",
+    "wikilinks",
+    "graph",
+    "semantic-search"
+  ],
+  "author": "Fabio Lopes",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "format": "prettier --write \"**/*.{ts,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,md}\"",
+    "quality:duplication": "jscpd src/ --config .jscpd.json",
+    "quality:unused": "knip --config knip.config.ts",
+    "quality:deps": "depcruise src/ --config .dependency-cruiser.cjs --output-type err",
+    "quality:security": "grype dir:. --only-fixed --fail-on high",
+    "quality": "npm run lint && npm run format:check && npm run typecheck && npm run quality:duplication && npm run quality:unused && npm run quality:deps",
+    "gen:vault": "tsx scripts/gen-synthetic-vault.ts",
+    "smoke:inspector": "bash scripts/inspector-smoke.sh",
+    "prepublishOnly": "npm run build && npm test",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.2.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vscode/ripgrep": "^1.15.11",
+    "better-sqlite3": "^11.5.0",
+    "chokidar": "^3.6.0",
+    "fast-glob": "^3.3.2",
+    "graphology": "^0.26.0",
+    "graphology-components": "^1.5.4",
+    "graphology-metrics": "^2.4.0",
+    "graphology-shortest-path": "^2.1.0",
+    "graphology-traversal": "^0.3.1",
+    "gray-matter": "^4.0.3",
+    "micromatch": "^4.0.5",
+    "remark-frontmatter": "^5.0.0",
+    "remark-parse": "^11.0.0",
+    "sqlite-vec": "0.1.9",
+    "unified": "^11.0.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/micromatch": "^4.0.6",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^1.3.0",
+    "dependency-cruiser": "^16.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-sonarjs": "^1.0.0",
+    "husky": "^9.0.0",
+    "jscpd": "^4.0.0",
+    "knip": "^5.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.2.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^1.3.0"
+  }
+}

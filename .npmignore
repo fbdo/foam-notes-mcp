@@ -1,0 +1,31 @@
+# Include only what's needed at runtime (dist/, README.md, LICENSE, package.json).
+# Everything below is excluded from the published tarball.
+
+src/
+tests/
+scripts/
+docs/
+coverage/
+.foam-mcp/
+.github/
+.husky/
+.vscode/
+.idea/
+
+node_modules/
+*.log
+*.tgz
+
+# Config files (kept in repo, not in package)
+.editorconfig
+.nvmrc
+.prettierrc
+.prettierignore
+.jscpd.json
+.dependency-cruiser.cjs
+knip.config.ts
+eslint.config.js
+vitest.config.ts
+tsconfig.json
+tsconfig.test.json
+tsconfig.eslint.json
