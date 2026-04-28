@@ -1,34 +1,32 @@
 import type { KnipConfig } from "knip";
 
 /**
- * Wave 1: src/ is empty apart from a placeholder. Dependencies listed below
- * are wired into the real entry point in Wave 2+. Suppress knip's "unused"
- * noise for them here so the quality gate stays green during scaffolding.
+ * Wave C (v0.1 Wave 2): server.ts is now the real MCP entry. It imports
+ * from @modelcontextprotocol/sdk/* and from tools/index.ts, which in turn
+ * wires the keyword layer. Server.ts is reached transitively through the
+ * smoke test in `tests/server.smoke.test.ts`, so it does not need a
+ * redundant explicit `entry` line.
+ *
+ * Dependencies still scheduled for later waves (semantic/graph layers)
+ * stay in `ignoreDependencies`.
  */
 const config: KnipConfig = {
-  entry: ["src/server.ts!", "src/placeholder.ts"],
+  entry: ["tests/**/*.test.ts"],
   project: ["src/**/*.ts"],
   ignoreBinaries: ["grype"],
   ignoreExportsUsedInFile: true,
   ignoreDependencies: [
+    // Wired into entry points in later waves.
     "@huggingface/transformers",
-    "@modelcontextprotocol/sdk",
-    "@vscode/ripgrep",
     "better-sqlite3",
     "chokidar",
-    "fast-glob",
     "graphology",
     "graphology-components",
     "graphology-metrics",
     "graphology-shortest-path",
     "graphology-traversal",
-    "gray-matter",
     "micromatch",
-    "remark-frontmatter",
-    "remark-parse",
     "sqlite-vec",
-    "unified",
-    "zod",
     "@types/better-sqlite3",
     "@types/micromatch",
   ],
