@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { resolve as resolvePath } from "node:path";
-import type { DirectedGraph } from "graphology";
+import { DirectedGraph } from "graphology";
 
 import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "../../src/graph/builder.js";
 import {
@@ -324,5 +324,135 @@ describe("central_notes (contract)", () => {
 
   it("rejects a non-positive limit", async () => {
     await expect(centralNotes({ algorithm: "degree", limit: 0 }, ctx)).rejects.toThrow(/limit/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers for the in-memory graph regression tests below.
+// ---------------------------------------------------------------------------
+
+const makeNote = (path: string, folder: string): GraphNodeAttrs => ({
+  type: "note",
+  title: path,
+  basename: path,
+  folder,
+  tags: [],
+  frontmatter: {},
+  isMoc: false,
+});
+
+const edgeAttrs = (): EdgeAttrs => ({ line: 1, column: 1 });
+
+// ---------------------------------------------------------------------------
+// neighbors — min-distance across directions (M1 regression coverage)
+// ---------------------------------------------------------------------------
+
+describe("neighbors — direction='both' uses min-distance across passes (M1)", () => {
+  it("reports the smaller of out-distance and in-distance for asymmetric reachability", async () => {
+    // Build an in-memory graph where B is:
+    //   - reachable from A via out-edges at depth 3 (A → X → Y → B)
+    //   - reachable from A via in-edges at depth 1 (B → A)
+    // The old implementation would 'claim' B at distance=3 via the out-pass
+    // because it ran first; the fix must report distance=1, direction='in'.
+    const g: DirectedGraph<GraphNodeAttrs, EdgeAttrs> = new DirectedGraph<
+      GraphNodeAttrs,
+      EdgeAttrs
+    >();
+    const VAULT = p(".");
+    const A = resolvePath(VAULT, "a.md");
+    const X = resolvePath(VAULT, "x.md");
+    const Y = resolvePath(VAULT, "y.md");
+    const B = resolvePath(VAULT, "b.md");
+    g.addNode(A, makeNote(A, "."));
+    g.addNode(X, makeNote(X, "."));
+    g.addNode(Y, makeNote(Y, "."));
+    g.addNode(B, makeNote(B, "."));
+    g.addDirectedEdge(A, X, edgeAttrs());
+    g.addDirectedEdge(X, Y, edgeAttrs());
+    g.addDirectedEdge(Y, B, edgeAttrs()); // out-depth 3 from A
+    g.addDirectedEdge(B, A, edgeAttrs()); // in-depth 1 from A
+
+    const local = { vaultPath: VAULT, graph: g };
+    const { neighbors: out } = await neighbors({ note: A, depth: 3, direction: "both" }, local);
+
+    const forB = out.find((n) => n.path === B);
+    expect(forB).toBeDefined();
+    expect(forB?.distance).toBe(1);
+    expect(forB?.direction).toBe("in");
+  });
+
+  it("ties (out=1, in=1) are resolved deterministically: 'out' wins", async () => {
+    // A ↔ B: out and in both reach B at distance 1. Tiebreaker: the 'out'
+    // pass runs first and claims the node, so direction should be 'out'.
+    const g: DirectedGraph<GraphNodeAttrs, EdgeAttrs> = new DirectedGraph<
+      GraphNodeAttrs,
+      EdgeAttrs
+    >();
+    const VAULT = p(".");
+    const A = resolvePath(VAULT, "a.md");
+    const B = resolvePath(VAULT, "b.md");
+    g.addNode(A, makeNote(A, "."));
+    g.addNode(B, makeNote(B, "."));
+    g.addDirectedEdge(A, B, edgeAttrs());
+    g.addDirectedEdge(B, A, edgeAttrs());
+
+    const local = { vaultPath: VAULT, graph: g };
+    const { neighbors: out } = await neighbors({ note: A, depth: 1, direction: "both" }, local);
+
+    const forB = out.find((n) => n.path === B);
+    expect(forB).toBeDefined();
+    expect(forB?.distance).toBe(1);
+    expect(forB?.direction).toBe("out");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// central_notes — folder boundary (M4 regression coverage)
+// ---------------------------------------------------------------------------
+
+describe("central_notes — folder filter uses '/' boundary (M4)", () => {
+  it("does not leak notes from a sibling folder whose name shares the prefix", async () => {
+    // Two folders, `01-Projects` and `01-Projects-Archive`, one note each.
+    // Asking for folder='01-Projects' must return only the note under
+    // `01-Projects`, not the one under `01-Projects-Archive`.
+    const g: DirectedGraph<GraphNodeAttrs, EdgeAttrs> = new DirectedGraph<
+      GraphNodeAttrs,
+      EdgeAttrs
+    >();
+    const VAULT = p(".");
+    const P1 = resolvePath(VAULT, "01-Projects", "p1.md");
+    const A1 = resolvePath(VAULT, "01-Projects-Archive", "a1.md");
+    g.addNode(P1, makeNote(P1, "01-Projects"));
+    g.addNode(A1, makeNote(A1, "01-Projects-Archive"));
+    // Give each node a non-zero degree so it appears in the scoring output.
+    g.addDirectedEdge(P1, A1, edgeAttrs());
+    g.addDirectedEdge(A1, P1, edgeAttrs());
+
+    const local = { vaultPath: VAULT, graph: g };
+    const { notes } = await centralNotes({ algorithm: "degree", folder: "01-Projects" }, local);
+    const paths = notes.map((n) => n.path);
+    expect(paths).toContain(P1);
+    expect(paths).not.toContain(A1);
+  });
+
+  it("accepts the folder itself (exact match, no trailing slash required)", async () => {
+    // Edge case: a note living directly in `folder` (not in a sub-folder).
+    const g: DirectedGraph<GraphNodeAttrs, EdgeAttrs> = new DirectedGraph<
+      GraphNodeAttrs,
+      EdgeAttrs
+    >();
+    const VAULT = p(".");
+    const P1 = resolvePath(VAULT, "01-Projects", "p1.md");
+    const P2 = resolvePath(VAULT, "01-Projects", "sub", "p2.md");
+    g.addNode(P1, makeNote(P1, "01-Projects"));
+    g.addNode(P2, makeNote(P2, "01-Projects/sub"));
+    g.addDirectedEdge(P1, P2, edgeAttrs());
+
+    const local = { vaultPath: VAULT, graph: g };
+    const { notes } = await centralNotes({ algorithm: "degree", folder: "01-Projects" }, local);
+    const paths = notes.map((n) => n.path);
+    // Both notes live under (or in) `01-Projects`; both must be returned.
+    expect(paths).toContain(P1);
+    expect(paths).toContain(P2);
   });
 });

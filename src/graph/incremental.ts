@@ -18,13 +18,13 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { basename, dirname, relative, resolve as resolvePath, sep as pathSep } from "node:path";
+import { basename, resolve as resolvePath } from "node:path";
 import type { DirectedGraph } from "graphology";
 
-import { parseFrontmatter } from "../parse/frontmatter.js";
 import { extractTags } from "../parse/tags.js";
 import { extractWikilinks, type Wikilink } from "../parse/wikilink.js";
-import { resolveWikilink, type VaultIndex } from "../resolver.js";
+import { deriveTitle, globToRegex, relativeFolder, safeParseFrontmatter } from "../path-util.js";
+import { resolveDirectoryLink, resolveWikilink, type VaultIndex } from "../resolver.js";
 import {
   placeholderId,
   type EdgeAttrs,
@@ -324,9 +324,8 @@ const promotePlaceholders = (
 };
 
 // ---------------------------------------------------------------------------
-// Shared helpers (small, deliberately duplicated from builder.ts to keep
-// the files independently testable; the logic is ~15 lines and has no
-// state).
+// Shared helpers (small glue specific to this file — broader duplicates live
+// in `src/path-util.ts` and `src/resolver.ts`).
 // ---------------------------------------------------------------------------
 
 const resolveLinkTarget = (target: string, vaultPath: string, vaultIndex: VaultIndex): string => {
@@ -340,60 +339,4 @@ const resolveLinkTarget = (target: string, vaultPath: string, vaultIndex: VaultI
     if (dir !== undefined) return dir;
   }
   return placeholderId(target);
-};
-
-const resolveDirectoryLink = (
-  target: string,
-  vaultPath: string,
-  vaultIndex: VaultIndex,
-): string | undefined => {
-  const normalized = target.trim().replace(/\\/g, "/").replace(/^\.\//, "");
-  if (normalized === "") return undefined;
-  const candidate = resolvePath(vaultPath, normalized, "index.md");
-  if (!isInsideVault(candidate, vaultPath)) return undefined;
-  return vaultIndex.allPaths.find((p) => resolvePath(p) === candidate);
-};
-
-const isInsideVault = (candidate: string, vaultPath: string): boolean => {
-  const c = resolvePath(candidate);
-  const v = resolvePath(vaultPath);
-  if (c === v) return true;
-  return c.startsWith(v + pathSep);
-};
-
-const safeParseFrontmatter = (src: string): { data: Record<string, unknown> } => {
-  try {
-    return { data: parseFrontmatter(src).data };
-  } catch {
-    return { data: {} };
-  }
-};
-
-const deriveTitle = (fm: Record<string, unknown>, fallback: string): string => {
-  const raw = fm.title;
-  if (typeof raw === "string" && raw.trim() !== "") return raw.trim();
-  return fallback;
-};
-
-const relativeFolder = (absPath: string, vaultPath: string): string => {
-  const rel = relative(vaultPath, dirname(absPath));
-  return rel === "" ? "." : rel.split(pathSep).join("/");
-};
-
-/**
- * Tiny glob→regex converter mirroring `builder.ts`'s private helper. We
- * deliberately duplicate (rather than cross-import) to preserve the graph
- * layer's module-level independence; the function is 10 lines and has no
- * business logic to drift. Wave 4 will extract this into `path-util.ts`
- * along with the other duplicates.
- */
-const globToRegex = (glob: string): RegExp => {
-  let pattern = "";
-  for (const ch of glob) {
-    if (ch === "*") pattern += ".*";
-    else if (ch === "?") pattern += ".";
-    else if (/[.\\+^$|()[\]{}]/.test(ch)) pattern += "\\" + ch;
-    else pattern += ch;
-  }
-  return new RegExp("^" + pattern + "$");
 };

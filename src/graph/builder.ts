@@ -13,14 +13,19 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { basename, dirname, relative, resolve as resolvePath, sep as pathSep } from "node:path";
+import { basename, resolve as resolvePath } from "node:path";
 import fg from "fast-glob";
 import { DirectedGraph } from "graphology";
 
-import { parseFrontmatter } from "../parse/frontmatter.js";
 import { extractTags } from "../parse/tags.js";
 import { extractWikilinks } from "../parse/wikilink.js";
-import { buildVaultIndex, resolveWikilink, type VaultIndex } from "../resolver.js";
+import { deriveTitle, globToRegex, relativeFolder, safeParseFrontmatter } from "../path-util.js";
+import {
+  buildVaultIndex,
+  resolveDirectoryLink,
+  resolveWikilink,
+  type VaultIndex,
+} from "../resolver.js";
 
 /**
  * Default MOC pattern, mirroring `src/config.ts`'s `DEFAULT_MOC_PATTERN`.
@@ -133,26 +138,6 @@ const readAndParseNote = async (absPath: string, vaultPath: string): Promise<Par
   };
 };
 
-const safeParseFrontmatter = (src: string): { data: Record<string, unknown> } => {
-  try {
-    return { data: parseFrontmatter(src).data };
-  } catch {
-    return { data: {} };
-  }
-};
-
-const deriveTitle = (fm: Record<string, unknown>, fallback: string): string => {
-  const raw = fm.title;
-  if (typeof raw === "string" && raw.trim() !== "") return raw.trim();
-  return fallback;
-};
-
-const relativeFolder = (absPath: string, vaultPath: string): string => {
-  const rel = relative(vaultPath, dirname(absPath));
-  // Normalize to POSIX-style separators for consistent JSON output.
-  return rel === "" ? "." : rel.split(pathSep).join("/");
-};
-
 const addEdgeForLink = (
   graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
   sourcePath: string,
@@ -207,25 +192,6 @@ const resolveLinkTarget = (
   return resolveDirectoryLink(target, vaultPath, vaultIndex);
 };
 
-const resolveDirectoryLink = (
-  target: string,
-  vaultPath: string,
-  vaultIndex: VaultIndex,
-): string | undefined => {
-  const normalized = target.trim().replace(/\\/g, "/").replace(/^\.\//, "");
-  if (normalized === "") return undefined;
-  const candidate = resolvePath(vaultPath, normalized, "index.md");
-  if (!isInsideVault(candidate, vaultPath)) return undefined;
-  return vaultIndex.allPaths.find((p) => resolvePath(p) === candidate);
-};
-
-const isInsideVault = (candidate: string, vaultPath: string): boolean => {
-  const c = resolvePath(candidate);
-  const v = resolvePath(vaultPath);
-  if (c === v) return true;
-  return c.startsWith(v + pathSep);
-};
-
 const listMarkdownFiles = async (vaultPath: string): Promise<string[]> => {
   const files = await fg("**/*.md", {
     cwd: vaultPath,
@@ -235,20 +201,4 @@ const listMarkdownFiles = async (vaultPath: string): Promise<string[]> => {
     followSymbolicLinks: false,
   });
   return files.map((f) => resolvePath(f)).sort();
-};
-
-/**
- * Tiny glob→regex converter mirroring `src/keyword/tools.ts`'s helper (we
- * deliberately duplicate instead of cross-importing to preserve the layer
- * boundary; the function is 10 lines and has no business logic to drift).
- */
-const globToRegex = (glob: string): RegExp => {
-  let pattern = "";
-  for (const ch of glob) {
-    if (ch === "*") pattern += ".*";
-    else if (ch === "?") pattern += ".";
-    else if (/[.\\+^$|()[\]{}]/.test(ch)) pattern += "\\" + ch;
-    else pattern += ch;
-  }
-  return new RegExp("^" + pattern + "$");
 };

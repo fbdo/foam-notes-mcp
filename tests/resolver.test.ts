@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildVaultIndex, resolveWikilink } from "../src/resolver.js";
+import { buildVaultIndex, resolveDirectoryLink, resolveWikilink } from "../src/resolver.js";
 
 const VAULT = [
   "/vault/00-Index-MOC.md",
@@ -88,5 +88,50 @@ describe("resolveWikilink", () => {
     const r = resolveWikilink("02-Areas\\note-a", index);
     expect(r.confidence).toBe("suffix");
     expect(r.candidates).toEqual(["/vault/02-Areas/note-a.md"]);
+  });
+});
+
+describe("resolveDirectoryLink", () => {
+  const VAULT = "/vault";
+  const index = buildVaultIndex([
+    "/vault/folder-link-target/index.md",
+    "/vault/02-Areas/note-a.md",
+    "/vault/nested/deep/index.md",
+  ]);
+
+  it("resolves a folder name to its index.md when the index exists in the vault", () => {
+    expect(resolveDirectoryLink("folder-link-target", VAULT, index)).toBe(
+      "/vault/folder-link-target/index.md",
+    );
+  });
+
+  it("resolves a nested folder link to the correct index.md", () => {
+    expect(resolveDirectoryLink("nested/deep", VAULT, index)).toBe("/vault/nested/deep/index.md");
+  });
+
+  it("returns undefined when the target folder has no index.md in the index", () => {
+    // `02-Areas` exists as a directory but no `02-Areas/index.md` is in the
+    // vault index — so this should not fire the directory-link fallback.
+    expect(resolveDirectoryLink("02-Areas", VAULT, index)).toBeUndefined();
+  });
+
+  it("returns undefined for an empty / whitespace target", () => {
+    expect(resolveDirectoryLink("", VAULT, index)).toBeUndefined();
+    expect(resolveDirectoryLink("   ", VAULT, index)).toBeUndefined();
+  });
+
+  it("strips a leading `./` from the target before resolving", () => {
+    expect(resolveDirectoryLink("./folder-link-target", VAULT, index)).toBe(
+      "/vault/folder-link-target/index.md",
+    );
+  });
+
+  it("normalizes backslashes in the target (legacy Windows-authored notes)", () => {
+    expect(resolveDirectoryLink("nested\\deep", VAULT, index)).toBe("/vault/nested/deep/index.md");
+  });
+
+  it("refuses targets that would escape the vault", () => {
+    // `../escape` would resolve to `/escape/index.md` — outside the vault.
+    expect(resolveDirectoryLink("../escape", VAULT, index)).toBeUndefined();
   });
 });

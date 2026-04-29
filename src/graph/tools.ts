@@ -21,11 +21,12 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { isAbsolute, resolve as resolvePath, sep as pathSep } from "node:path";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import type { DirectedGraph } from "graphology";
 import { bidirectional } from "graphology-shortest-path/unweighted.js";
 
 import { ToolValidationError } from "../errors.js";
+import { isInsideVault } from "../path-util.js";
 import type { EdgeAttrs, GraphNodeAttrs, NoteNodeAttrs } from "./builder.js";
 import { computePageRank } from "./pagerank.js";
 
@@ -188,20 +189,33 @@ export const neighbors = async (
   const depth = validateDepth(input.depth);
   const direction = validateDirection(input.direction);
 
-  const out: Neighbor[] = [];
-  const seen = new Set<string>();
-  seen.add(notePath); // exclude the starting node
+  // Run each requested direction as an independent BFS. The results are then
+  // merged by path, keeping the SMALLER distance — so a node reachable via
+  // `out` at depth 3 and via `in` at depth 1 reports distance=1/direction=in.
+  // Tiebreaker (equal distance in both directions): the first pass wins. We
+  // scan `out` first so the tiebreaker favors outbound — the authorial
+  // direction, matching pre-fix behavior for the tie case.
+  const outResults =
+    direction === "out" || direction === "both"
+      ? bfsDistances(ctx.graph, notePath, depth, "out")
+      : new Map<string, number>();
+  const inResults =
+    direction === "in" || direction === "both"
+      ? bfsDistances(ctx.graph, notePath, depth, "in")
+      : new Map<string, number>();
 
-  // For `both`, collect `out` first (authorial direction), then fall back to
-  // `in`. A node reachable both ways is recorded once with its first direction.
-  if (direction === "out" || direction === "both") {
-    collectNeighbors(ctx.graph, notePath, depth, "out", seen, out);
+  const merged = new Map<string, Neighbor>();
+  for (const [path, distance] of outResults) {
+    merged.set(path, { path, distance, direction: "out" });
   }
-  if (direction === "in" || direction === "both") {
-    collectNeighbors(ctx.graph, notePath, depth, "in", seen, out);
+  for (const [path, distance] of inResults) {
+    const existing = merged.get(path);
+    if (existing === undefined || distance < existing.distance) {
+      merged.set(path, { path, distance, direction: "in" });
+    }
   }
 
-  return { neighbors: out };
+  return { neighbors: [...merged.values()] };
 };
 
 export const shortestPath = async (
@@ -363,53 +377,50 @@ const requireNotePath = (
   return absolute;
 };
 
-const isInsideVault = (candidate: string, vaultPath: string): boolean => {
-  const c = resolvePath(candidate);
-  const v = resolvePath(vaultPath);
-  if (c === v) return true;
-  return c.startsWith(v + pathSep);
-};
-
 // ---------------------------------------------------------------------------
 // Traversal / scoring helpers.
 // ---------------------------------------------------------------------------
 
-const collectNeighbors = (
+/**
+ * Level-order BFS from `start` in a single direction, up to `depth` hops.
+ * Returns a map of note-node path → minimum distance reached. Placeholder
+ * nodes are traversed (so that a note behind a placeholder is still
+ * discoverable) but never appear in the result map — the `neighbors` tool
+ * only reports real notes. The starting node is always excluded.
+ */
+const bfsDistances = (
   graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
   start: string,
   depth: number,
   direction: "out" | "in",
-  seen: Set<string>,
-  out: Neighbor[],
-): void => {
-  // Manual level-order BFS so we can track `distance` cleanly and honor the
-  // per-direction `seen` set (graphology-traversal would require us to
-  // reconstruct depths via a parallel map). For the fixture's 11-node graph,
-  // the overhead of the abstraction outweighs the gain.
+): Map<string, number> => {
+  const distances = new Map<string, number>();
+  const visited = new Set<string>([start]);
   let frontier = [start];
   for (let distance = 1; distance <= depth; distance += 1) {
-    const next = expandFrontier(graph, frontier, direction, distance, seen, out);
+    const next = expandBfsFrontier(graph, frontier, direction, distance, visited, distances);
     if (next.length === 0) break;
     frontier = next;
   }
+  return distances;
 };
 
-const expandFrontier = (
+const expandBfsFrontier = (
   graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
   frontier: readonly string[],
   direction: "out" | "in",
   distance: number,
-  seen: Set<string>,
-  out: Neighbor[],
+  visited: Set<string>,
+  distances: Map<string, number>,
 ): string[] => {
   const next: string[] = [];
   for (const node of frontier) {
     const neighborIds = direction === "out" ? graph.outNeighbors(node) : graph.inNeighbors(node);
     for (const neighborId of neighborIds) {
-      if (seen.has(neighborId)) continue;
-      seen.add(neighborId);
+      if (visited.has(neighborId)) continue;
+      visited.add(neighborId);
       if (graph.getNodeAttributes(neighborId).type === "note") {
-        out.push({ path: neighborId, distance, direction });
+        distances.set(neighborId, distance);
       }
       next.push(neighborId);
     }
@@ -468,7 +479,11 @@ const filterByFolder = (
   for (const [path, score] of scores.entries()) {
     if (folder !== undefined) {
       const attrs = graph.getNodeAttributes(path) as NoteNodeAttrs;
-      if (!attrs.folder.startsWith(folder)) continue;
+      // Boundary match: accept the folder itself OR any nested sub-folder.
+      // Naively using `startsWith(folder)` would also match sibling folders
+      // whose names *start with* `folder` (e.g. `01-Projects-Archive` when
+      // caller asked for `01-Projects`).
+      if (attrs.folder !== folder && !attrs.folder.startsWith(folder + "/")) continue;
     }
     out.push({ path, score });
   }

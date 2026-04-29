@@ -11,7 +11,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { isAbsolute, resolve as resolvePath, sep as pathSep } from "node:path";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import fg from "fast-glob";
 
 import { ToolValidationError } from "../errors.js";
@@ -19,8 +19,10 @@ import { parseFrontmatter } from "../parse/frontmatter.js";
 import { extractTags } from "../parse/tags.js";
 import { extractTasks, type Task } from "../parse/tasks.js";
 import { extractWikilinks, type Wikilink } from "../parse/wikilink.js";
+import { globToRegex, isInsideVault, safeParseFrontmatter } from "../path-util.js";
 import {
   buildVaultIndex,
+  resolveDirectoryLink,
   resolveWikilink,
   type ResolveConfidence,
   type VaultIndex,
@@ -348,7 +350,7 @@ const aggregateNoteStats = (
   agg: MutableVaultStats,
   uniqueTags: Set<string>,
 ): void => {
-  const fm = safeParseFrontmatter(src);
+  const { data: fm } = safeParseFrontmatter(src);
   const tags = extractTags(src, fm);
   agg.totalTags += tags.length;
   for (const t of tags) uniqueTags.add(t);
@@ -410,11 +412,15 @@ const listMarkdownFiles = async (vaultPath: string): Promise<string[]> => {
   return files.map((f) => resolvePath(f));
 };
 
-const isInsideVault = (candidate: string, vaultPath: string): boolean => {
-  const normalizedCandidate = resolvePath(candidate);
-  const normalizedVault = resolvePath(vaultPath);
-  if (normalizedCandidate === normalizedVault) return true;
-  return normalizedCandidate.startsWith(normalizedVault + pathSep);
+const isMocFile = (absolutePath: string, mocPattern: string): boolean => {
+  // `fast-glob`'s `mm` is lightweight; we reuse its util indirectly by just
+  // comparing against the basename. For the default pattern `*-MOC.md` we
+  // implement a simple glob-to-regex converter to avoid re-importing
+  // micromatch here (it's already a transitive dep of fast-glob, but we
+  // want a focused surface).
+  const base = absolutePath.split("/").pop() ?? "";
+  const regex = globToRegex(mocPattern);
+  return regex.test(base);
 };
 
 const matchesFrontmatter = (
@@ -454,14 +460,6 @@ const containsValue = (actual: unknown, expected: unknown): boolean => {
   return actual === expected;
 };
 
-const safeParseFrontmatter = (src: string): Record<string, unknown> => {
-  try {
-    return parseFrontmatter(src).data;
-  } catch {
-    return {};
-  }
-};
-
 // Simple LRU-of-size-one cache for the vault index; `resolve_wikilink` is
 // the hot path. We key on the vault path so tests targeting different
 // fixtures don't collide.
@@ -485,39 +483,4 @@ const getOrBuildVaultIndex = async (vaultPath: string): Promise<VaultIndex> => {
 /** Test-only hook: reset the cached vault index between tests. */
 export const _resetVaultIndexCache = (): void => {
   cachedIndex = undefined;
-};
-
-const resolveDirectoryLink = (
-  target: string,
-  vaultPath: string,
-  index: VaultIndex,
-): string | undefined => {
-  const normalized = target.trim().replace(/\\/g, "/").replace(/^\.\//, "");
-  if (normalized === "") return undefined;
-  const candidate = resolvePath(vaultPath, normalized, "index.md");
-  if (!isInsideVault(candidate, vaultPath)) return undefined;
-  if (!index.allPaths.some((p) => resolvePath(p) === candidate)) return undefined;
-  return candidate;
-};
-
-const isMocFile = (absolutePath: string, mocPattern: string): boolean => {
-  // `fast-glob`'s `mm` is lightweight; we reuse its util indirectly by just
-  // comparing against the basename. For the default pattern `*-MOC.md` we
-  // implement a simple glob-to-regex converter to avoid re-importing
-  // micromatch here (it's already a transitive dep of fast-glob, but we
-  // want a focused surface).
-  const base = absolutePath.split("/").pop() ?? "";
-  const regex = globToRegex(mocPattern);
-  return regex.test(base);
-};
-
-const globToRegex = (glob: string): RegExp => {
-  let pattern = "";
-  for (const ch of glob) {
-    if (ch === "*") pattern += ".*";
-    else if (ch === "?") pattern += ".";
-    else if (/[.\\+^$|()[\]{}]/.test(ch)) pattern += "\\" + ch;
-    else pattern += ch;
-  }
-  return new RegExp("^" + pattern + "$");
 };

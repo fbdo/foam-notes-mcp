@@ -27,7 +27,9 @@
  *     (wikilink parse already separates heading from target).
  */
 
-import { basename } from "node:path";
+import { basename, resolve as resolvePath } from "node:path";
+
+import { isInsideVault } from "./path-util.js";
 
 /**
  * Fast lookup structure. `byBasename` maps basename (with `.md` stripped,
@@ -163,4 +165,28 @@ const freezeMap = (m: Map<string, string[]>): ReadonlyMap<string, readonly strin
   const frozen = new Map<string, readonly string[]>();
   for (const [k, v] of m.entries()) frozen.set(k, Object.freeze([...v]));
   return frozen;
+};
+
+/**
+ * Directory-link fallback: `[[folder]]` → `folder/index.md`, provided the
+ * target resolves to an `index.md` inside the vault that actually exists in
+ * the supplied index. Returns the absolute path of that `index.md`, or
+ * `undefined` when no such file is known to the vault.
+ *
+ * This is a separate rung below the wikilink ladder because it is opt-in
+ * (Foam supports it but not every vault uses folder-as-note). Consumers
+ * that care — keyword tools and the graph builder — call
+ * `resolveWikilink` first and fall through to this helper only when the
+ * main ladder returns no candidates.
+ */
+export const resolveDirectoryLink = (
+  target: string,
+  vaultPath: string,
+  vaultIndex: VaultIndex,
+): string | undefined => {
+  const normalized = target.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  if (normalized === "") return undefined;
+  const candidate = resolvePath(vaultPath, normalized, "index.md");
+  if (!isInsideVault(candidate, vaultPath)) return undefined;
+  return vaultIndex.allPaths.find((p) => resolvePath(p) === candidate);
 };
