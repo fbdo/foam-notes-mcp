@@ -1,14 +1,25 @@
 import type { KnipConfig } from "knip";
 
 /**
- * Wave C (v0.1 Wave 2): server.ts is now the real MCP entry. It imports
- * from @modelcontextprotocol/sdk/* and from tools/index.ts, which in turn
- * wires the keyword layer. Server.ts is reached transitively through the
- * smoke test in `tests/server.smoke.test.ts`, so it does not need a
- * redundant explicit `entry` line.
+ * Wave C (v0.1 Wave 2): server.ts is the real MCP entry. It imports from
+ * @modelcontextprotocol/sdk/*, from tools/index.ts (which wires both the
+ * keyword and graph layers), and from resources/graph.ts. Server.ts is
+ * reached transitively through the smoke test in
+ * `tests/server.smoke.test.ts`, so it does not need a redundant explicit
+ * `entry` line.
  *
- * Dependencies still scheduled for later waves (semantic/graph layers)
- * stay in `ignoreDependencies`.
+ * Wave 3D: graph-layer deps reached via
+ *   server.ts → tools/index.ts → graph/tools.ts
+ * are `graphology`, `graphology-shortest-path`, and `graphology-metrics`
+ * (via graph/pagerank.ts). They are no longer ignored.
+ *
+ * `graphology-components` and `graphology-traversal` remain declared
+ * dependencies for anticipated future-wave usage but are not yet imported,
+ * so they stay in `ignoreDependencies` to keep knip clean. Remove from
+ * this list once they are wired into a source file.
+ *
+ * Dependencies still scheduled for later waves (semantic layer, watcher)
+ * remain in `ignoreDependencies`.
  */
 const config: KnipConfig = {
   entry: ["tests/**/*.test.ts"],
@@ -20,10 +31,7 @@ const config: KnipConfig = {
     "@huggingface/transformers",
     "better-sqlite3",
     "chokidar",
-    "graphology",
     "graphology-components",
-    "graphology-metrics",
-    "graphology-shortest-path",
     "graphology-traversal",
     "micromatch",
     "sqlite-vec",

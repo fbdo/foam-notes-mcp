@@ -8,13 +8,19 @@ const EXPECTED_TOOL_NAMES = [
   "resolve_wikilink",
   "get_note",
   "get_vault_stats",
+  "list_backlinks",
+  "neighbors",
+  "shortest_path",
+  "orphans",
+  "placeholders",
+  "central_notes",
 ] as const;
 
 describe("TOOL_DEFINITIONS", () => {
-  it("contains exactly the 6 keyword tools", () => {
+  it("contains exactly the 12 keyword + graph tools", () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name).sort();
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort());
-    expect(TOOL_DEFINITIONS.length).toBe(6);
+    expect(TOOL_DEFINITIONS.length).toBe(12);
   });
 
   it("every tool has a non-empty description", () => {

@@ -4,12 +4,16 @@
  *
  * Responsibilities (PLAN decisions #20/#22/#23):
  *   - Load config via `loadConfig()`; on failure, log to stderr and exit 1.
- *   - Build a `KeywordToolContext` from the config and pass it to every handler.
- *   - Register `ListTools` + `CallTool` request handlers on the MCP SDK's
- *     low-level `Server` and speak JSON-RPC over `StdioServerTransport`.
+ *   - Build the vault graph via `buildGraph()` at startup.
+ *   - Build a combined `ToolContext` (keyword + graph sub-contexts) from the
+ *     config and graph, and pass it to every handler.
+ *   - Register `ListTools` / `CallTool` / `ListResources` / `ReadResource`
+ *     request handlers on the MCP SDK's low-level `Server` and speak
+ *     JSON-RPC over `StdioServerTransport`.
  *   - Wrap every tool invocation so errors become `McpError` with the right
  *     JSON-RPC error code (unknown tool → MethodNotFound; handler throw →
- *     InternalError; caller-side schema mismatch → InvalidParams).
+ *     InternalError; caller-side schema mismatch → InvalidParams). Unknown
+ *     resource URI → `InvalidRequest`.
  *   - Gracefully handle `SIGINT` / `SIGTERM` by closing the transport.
  *
  * Constraints:
@@ -28,42 +32,56 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ErrorCode,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
   McpError,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { loadConfig, type FoamConfig } from "./config.js";
 import { ToolValidationError } from "./errors.js";
-import type { KeywordToolContext } from "./keyword/tools.js";
-import { TOOL_DEFINITIONS, TOOL_HANDLERS } from "./tools/index.js";
+import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "./graph/builder.js";
+import { GRAPH_RESOURCE_URI, listGraphResources, readGraphResource } from "./resources/graph.js";
+import { TOOL_DEFINITIONS, TOOL_HANDLERS, type ToolContext } from "./tools/index.js";
+import type { DirectedGraph } from "graphology";
 
 const SERVER_NAME = "foam-notes-mcp";
 const SERVER_VERSION = "0.0.1";
 
-type AnyHandler = (input: unknown, ctx: KeywordToolContext) => Promise<unknown>;
+type AnyHandler = (input: unknown, ctx: ToolContext) => Promise<unknown>;
 
 /**
- * Build a {@link KeywordToolContext} from the loaded runtime config.
+ * Build a {@link ToolContext} from the loaded runtime config and the
+ * prebuilt vault graph.
  *
  * Exposed for testing so that a smoke test can construct a server instance
- * without having to populate every `FoamConfig` field.
+ * without having to populate every `FoamConfig` field or scan a real vault.
  */
-export const buildToolContext = (config: FoamConfig): KeywordToolContext => ({
-  vaultPath: config.vaultPath,
-  mocPattern: config.mocPattern,
-  ripgrepPath: config.ripgrepPath,
+export const buildToolContext = (
+  config: FoamConfig,
+  graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
+): ToolContext => ({
+  keyword: {
+    vaultPath: config.vaultPath,
+    mocPattern: config.mocPattern,
+    ripgrepPath: config.ripgrepPath,
+  },
+  graph: {
+    vaultPath: config.vaultPath,
+    graph,
+  },
 });
 
 /**
- * Construct a fully-configured MCP `Server` with both request handlers
- * registered. Does NOT connect to a transport — that is the caller's
- * responsibility (and it is deliberate so that tests can inspect the server
- * without any real I/O).
+ * Construct a fully-configured MCP `Server` with tool and resource request
+ * handlers registered. Does NOT connect to a transport — that is the
+ * caller's responsibility (and it is deliberate so that tests can inspect
+ * the server without any real I/O).
  */
-export const buildServer = (ctx: KeywordToolContext): Server => {
+export const buildServer = (ctx: ToolContext): Server => {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({
@@ -94,6 +112,35 @@ export const buildServer = (ctx: KeywordToolContext): Server => {
         {
           type: "text",
           text: JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  });
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    const resources = await listGraphResources();
+    return {
+      resources: resources.map((r) => ({
+        uri: r.uri,
+        name: r.name,
+        description: r.description,
+        mimeType: r.mimeType,
+      })),
+    };
+  });
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    if (uri !== GRAPH_RESOURCE_URI) {
+      throw new McpError(ErrorCode.InvalidRequest, `Unknown resource URI: ${uri}`);
+    }
+    const contents = await readGraphResource({ graph: ctx.graph.graph });
+    return {
+      contents: [
+        {
+          uri: contents.uri,
+          mimeType: contents.mimeType,
+          text: contents.text,
         },
       ],
     };
@@ -134,7 +181,16 @@ const main = async (): Promise<void> => {
     process.exit(1);
   }
 
-  const ctx = buildToolContext(config);
+  let graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>;
+  try {
+    graph = await buildGraph(config.vaultPath, { mocPattern: config.mocPattern });
+  } catch (err) {
+    logToStderr("failed to build graph", err);
+    process.exit(1);
+  }
+  console.error(`Graph built: ${String(graph.order)} nodes, ${String(graph.size)} edges`);
+
+  const ctx = buildToolContext(config, graph);
   const server = buildServer(ctx);
   const transport = new StdioServerTransport();
 
