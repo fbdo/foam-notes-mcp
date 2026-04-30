@@ -14,6 +14,19 @@ Wave 7.
 
 macOS and Linux only (Windows rejected at startup).
 
+## Dependency policy
+
+- Production-dep majors are blocked in Dependabot; they require a manual PR
+  that cross-references `docs/PLAN.md` Locked Decisions.
+- Exact-pinned packages (`@huggingface/transformers`, `sqlite-vec`,
+  `remark-wiki-link`, `remark-gfm`) are ignored entirely and bumped only
+  via a manual PLAN update.
+- Dev-dep majors are allowed except for `@types/node` and `typescript`,
+  which are pinned to the current CI Node matrix.
+- PRs are grouped (vitest family, eslint family, remark family, graphology
+  family, `@types/*`) to keep the queue small.
+- Schedule: weekly, Monday.
+
 ## License
 
 [MIT](./LICENSE) © Fabio Lopes

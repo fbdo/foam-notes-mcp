@@ -1,13 +1,87 @@
 version: 2
 updates:
-  - package-ecosystem: npm
+  # Production dependencies — conservative; no auto-majors.
+  - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    target-branch: "main"
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    allow:
+      - dependency-type: "production"
+    # Block all production-dep majors; require manual PLAN review.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # PLAN-pinned exact versions (Locked Decisions).
+      - dependency-name: "@huggingface/transformers"
+      - dependency-name: "sqlite-vec"
+      - dependency-name: "remark-wiki-link"
+      - dependency-name: "remark-gfm"
+    groups:
+      remark:
+        patterns: ["remark-*", "unified", "mdast-*"]
+      graphology:
+        patterns: ["graphology", "graphology-*"]
+      mcp-sdk:
+        patterns: ["@modelcontextprotocol/*"]
 
-  - package-ecosystem: github-actions
+  # Dev dependencies — majors allowed only on explicit packages;
+  # grouped to avoid cascading PRs.
+  - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    target-branch: "main"
+    labels:
+      - "dependencies"
+      - "dev"
+      - "automated"
+    commit-message:
+      prefix: "chore(deps-dev)"
+      include: "scope"
+    allow:
+      - dependency-type: "development"
+    ignore:
+      # @types/node and typescript majors blocked until CI Node matrix advances.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+    groups:
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
+      eslint:
+        patterns: ["eslint", "eslint-*", "@eslint/*", "typescript-eslint"]
+      types:
+        patterns: ["@types/*"]
+      husky-lint-staged:
+        patterns: ["husky", "lint-staged"]
+      prettier:
+        patterns: ["prettier", "prettier-*"]
+
+  # GitHub Actions — keep runners + actions current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+      - "automated"
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]
