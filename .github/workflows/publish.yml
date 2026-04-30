@@ -30,6 +30,8 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: npm run build
 
