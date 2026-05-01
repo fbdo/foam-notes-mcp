@@ -31,8 +31,6 @@ const config: KnipConfig = {
     "@huggingface/transformers",
     "better-sqlite3",
     "chokidar",
-    "graphology-components",
-    "graphology-traversal",
     "micromatch",
     "sqlite-vec",
     "@types/better-sqlite3",

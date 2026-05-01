@@ -6,8 +6,8 @@
  *
  * Layer rules (enforced by dependency-cruiser):
  *   - MAY import from: `graph/builder.ts`, `graph/pagerank.ts`, `errors.ts`,
- *     `resolver.ts`, npm deps (graphology, graphology-shortest-path,
- *     graphology-traversal), node built-ins.
+ *     `resolver.ts`, npm deps (graphology, graphology-shortest-path),
+ *     node built-ins.
  *   - MUST NOT import from: `keyword/`, `semantic/`, `hybrid/`, `tools/`,
  *     `resources/`, `server.ts`, or the MCP SDK.
  *
