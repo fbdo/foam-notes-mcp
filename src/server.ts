@@ -27,6 +27,11 @@
 
 import { pathToFileURL } from "node:url";
 
+// We deliberately use the low-level `Server` API (not `McpServer`) to keep
+// full control over request-handler wiring and error shaping. The SDK's
+// `@deprecated` hint is advisory for new code; this file is the documented
+// low-level path (see module header above).
+// eslint-disable-next-line sonarjs/deprecation
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -78,7 +83,9 @@ export const buildToolContext = (
  * caller's responsibility (and it is deliberate so that tests can inspect
  * the server without any real I/O).
  */
+// eslint-disable-next-line sonarjs/deprecation -- low-level Server is intentional; see import comment
 export const buildServer = (ctx: ToolContext): Server => {
+  // eslint-disable-next-line sonarjs/deprecation -- low-level Server is intentional; see import comment
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {}, resources: {} } },

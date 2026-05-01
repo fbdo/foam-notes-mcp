@@ -33,14 +33,14 @@ describe("list_backlinks (contract)", () => {
   it("returns every source note that links to note-a", async () => {
     // note-a is linked to from: 00-Index-MOC, 02-Areas/note-b, project-y, timestamped
     const { locations } = await listBacklinks({ note: "02-Areas/note-a.md" }, ctx);
-    const sources = locations.map((l) => l.sourcePath).sort();
+    const sources = locations.map((l) => l.sourcePath).sort((a, b) => a.localeCompare(b));
     expect(sources).toEqual(
       [
         p("00-Index-MOC.md"),
         p("01-Projects/project-y.md"),
         p("02-Areas/note-b.md"),
         p("03-Resources/202604160900-timestamped.md"),
-      ].sort(),
+      ].sort((a, b) => a.localeCompare(b)),
     );
     // Every location exposes a positive line and a non-empty context snippet
     // (the lines all contain a wikilink), plus the alias from note-b.
@@ -246,7 +246,7 @@ describe("orphans (contract)", () => {
         p("03-Resources/no-frontmatter.md"),
         p("04-Archives/archived.md"),
         p("202604170000-ambiguous.md"),
-      ].sort(),
+      ].sort((a, b) => a.localeCompare(b)),
     );
   });
 });

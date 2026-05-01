@@ -18,8 +18,8 @@ const EXPECTED_TOOL_NAMES = [
 
 describe("TOOL_DEFINITIONS", () => {
   it("contains exactly the 12 keyword + graph tools", () => {
-    const names = TOOL_DEFINITIONS.map((t) => t.name).sort();
-    expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort());
+    const names = TOOL_DEFINITIONS.map((t) => t.name).sort((a, b) => a.localeCompare(b));
+    expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort((a, b) => a.localeCompare(b)));
     expect(TOOL_DEFINITIONS.length).toBe(12);
   });
 

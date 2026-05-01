@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+// eslint-disable-next-line sonarjs/deprecation -- smoke-tests the low-level Server API by design
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { DirectedGraph } from "graphology";
 
@@ -14,7 +17,7 @@ describe("server (smoke)", () => {
 
   const fakeConfig: FoamConfig = {
     vaultPath: VAULT,
-    cacheDir: "/tmp/foam-notes-mcp-smoke-cache",
+    cacheDir: join(tmpdir(), "foam-notes-mcp-smoke-cache"),
     mocPattern: "*-MOC.md",
     ripgrepPath: "/usr/bin/rg",
   };
@@ -39,6 +42,7 @@ describe("server (smoke)", () => {
   it("buildServer returns an MCP Server instance", () => {
     const ctx = buildToolContext(fakeConfig, makeGraph());
     const server = buildServer(ctx);
+    // eslint-disable-next-line sonarjs/deprecation -- asserting on the low-level Server API is the purpose of this test
     expect(server).toBeInstanceOf(Server);
   });
 
@@ -47,7 +51,9 @@ describe("server (smoke)", () => {
     const a = buildServer(ctx);
     const b = buildServer(ctx);
     expect(a).not.toBe(b);
+    // eslint-disable-next-line sonarjs/deprecation -- asserting on the low-level Server API is the purpose of this test
     expect(a).toBeInstanceOf(Server);
+    // eslint-disable-next-line sonarjs/deprecation -- asserting on the low-level Server API is the purpose of this test
     expect(b).toBeInstanceOf(Server);
   });
 

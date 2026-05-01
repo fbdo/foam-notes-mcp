@@ -77,11 +77,11 @@ describe("find_by_frontmatter (contract)", () => {
       { key: "title", value: "Project", operator: "contains" },
       ctx,
     );
-    expect(hits.map((h) => h.path).sort()).toEqual(
+    expect(hits.map((h) => h.path).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         resolvePath(VAULT, "01-Projects/project-x.md"),
         resolvePath(VAULT, "01-Projects/project-y.md"),
-      ].sort(),
+      ].sort((a, b) => a.localeCompare(b)),
     );
   });
 

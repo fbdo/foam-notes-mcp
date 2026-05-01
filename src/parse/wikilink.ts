@@ -33,6 +33,10 @@ export interface Wikilink {
  * don't silently trigger catastrophic backtracking). We reject newlines
  * inside the body to avoid chewing across paragraphs.
  */
+// The lazy quantifier is bounded by a character class that excludes `]` and
+// `\n`, so there is no backtracking ambiguity; sonarjs flags the shape but
+// the runtime is strictly linear.
+// eslint-disable-next-line sonarjs/slow-regex
 const WIKILINK_PATTERN = /\[\[([^\]\n]+?)\]\]/g;
 
 const FENCED_CODE_PATTERN = /(^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:\n(?:```|~~~)|$)/g;
@@ -57,7 +61,7 @@ export const extractWikilinks = (source: string): Wikilink[] => {
   for (const match of scrubbed.matchAll(WIKILINK_PATTERN)) {
     const body = match[1];
     const index = match.index;
-    if (body === undefined || index === undefined) continue;
+    if (body === undefined) continue;
     const parsed = parseWikilinkBody(body);
     if (!parsed) continue;
     const { line, column } = offsetToLineColumn(scrubbed, index);

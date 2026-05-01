@@ -13,7 +13,7 @@
  * import from any feature layer.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   mkdirSync,
   readFileSync,
@@ -105,9 +105,7 @@ export const readCacheIfExists = (absPath: string): string | undefined => {
  */
 export const atomicWrite = (absPath: string, contents: string | Buffer): void => {
   ensureDir(dirname(absPath));
-  const tmp = `${absPath}.tmp-${process.pid.toString()}-${Date.now().toString()}-${Math.random()
-    .toString(36)
-    .slice(2, 10)}`;
+  const tmp = `${absPath}.tmp-${process.pid.toString()}-${Date.now().toString()}-${randomBytes(5).toString("hex")}`;
   try {
     writeFileSync(tmp, contents);
     renameSync(tmp, absPath);

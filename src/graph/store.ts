@@ -77,7 +77,7 @@ export const computeVaultFingerprint = async (vaultPath: string): Promise<string
     onlyFiles: true,
     followSymbolicLinks: false,
   });
-  const normalized = files.map((f) => resolvePath(f)).sort();
+  const normalized = files.map((f) => resolvePath(f)).sort((a, b) => a.localeCompare(b));
   const rows: string[] = [];
   for (const f of normalized) {
     const st = await stat(f);

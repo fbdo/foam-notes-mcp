@@ -200,5 +200,5 @@ const listMarkdownFiles = async (vaultPath: string): Promise<string[]> => {
     onlyFiles: true,
     followSymbolicLinks: false,
   });
-  return files.map((f) => resolvePath(f)).sort();
+  return files.map((f) => resolvePath(f)).sort((a, b) => a.localeCompare(b));
 };

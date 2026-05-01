@@ -251,7 +251,7 @@ export const orphans = async (
     if (hasNoteNeighbor(ctx.graph, nodeId)) return;
     result.push(nodeId);
   });
-  result.sort();
+  result.sort((a, b) => a.localeCompare(b));
   return { notes: result };
 };
 
@@ -266,10 +266,10 @@ export const placeholders = async (
     ctx.graph.forEachInboundEdge(nodeId, (_edge, _attrs, source, _target, srcAttrs) => {
       if (srcAttrs.type === "note") referencedBy.push(source);
     });
-    referencedBy.sort();
+    referencedBy.sort((a, b) => a.localeCompare(b));
     result.push({ target: attrs.target, referenced_by: referencedBy });
   });
-  result.sort((a, b) => (a.target < b.target ? -1 : a.target > b.target ? 1 : 0));
+  result.sort((a, b) => a.target.localeCompare(b.target));
   return { placeholders: result };
 };
 
