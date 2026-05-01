@@ -105,7 +105,7 @@
     "husky": "^9.0.0",
     "jscpd": "^4.0.0",
     "knip": "^5.0.0",
-    "lint-staged": "^15.0.0",
+    "lint-staged": "^16.4.0",
     "prettier": "^3.2.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
