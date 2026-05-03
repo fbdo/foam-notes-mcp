@@ -2,19 +2,22 @@
 /**
  * foam-notes-mcp server — minimal MCP server over stdio.
  *
- * Responsibilities (PLAN decisions #20/#22/#23):
+ * Responsibilities (PLAN decisions #20/#22/#23/#25):
  *   - Load config via `loadConfig()`; on failure, log to stderr and exit 1.
  *   - Build the vault graph via `buildGraph()` at startup.
  *   - Build a combined `ToolContext` (keyword + graph sub-contexts) from the
  *     config and graph, and pass it to every handler.
- *   - Register `ListTools` / `CallTool` / `ListResources` / `ReadResource`
- *     request handlers on the MCP SDK's low-level `Server` and speak
- *     JSON-RPC over `StdioServerTransport`.
- *   - Wrap every tool invocation so errors become `McpError` with the right
- *     JSON-RPC error code (unknown tool → MethodNotFound; handler throw →
- *     InternalError; caller-side schema mismatch → InvalidParams). Unknown
- *     resource URI → `InvalidRequest`.
- *   - Gracefully handle `SIGINT` / `SIGTERM` by closing the transport.
+ *   - Register each of the 12 tools via `McpServer.registerTool(name,
+ *     { description, inputSchema }, handler)` using zod raw shapes from
+ *     `TOOL_ZOD_SHAPES`. The SDK derives `tools/list` output from the
+ *     registrations and validates `tools/call` input against the zod shape
+ *     before invoking the handler.
+ *   - Register `foam://graph` via `McpServer.registerResource`; the SDK
+ *     auto-handles `resources/list` and `resources/read` dispatch.
+ *   - Handler errors: `McpServer` flattens a thrown `Error` into
+ *     `{ isError: true, content: [{ type: "text", text: err.message }] }`.
+ *     `ToolValidationError` remains thrown by handlers — the message
+ *     reaches the client as content text (per amended PLAN #22).
  *
  * Constraints:
  *   - stdout is reserved for JSON-RPC framing; all logging goes to stderr
@@ -27,33 +30,22 @@
 
 import { pathToFileURL } from "node:url";
 
-// We deliberately use the low-level `Server` API (not `McpServer`) to keep
-// full control over request-handler wiring and error shaping. The SDK's
-// `@deprecated` hint is advisory for new code; this file is the documented
-// low-level path (see module header above).
-// eslint-disable-next-line sonarjs/deprecation
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ErrorCode,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 
 import { loadConfig, type FoamConfig } from "./config.js";
-import { ToolValidationError } from "./errors.js";
 import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "./graph/builder.js";
-import { GRAPH_RESOURCE_URI, listGraphResources, readGraphResource } from "./resources/graph.js";
-import { TOOL_DEFINITIONS, TOOL_HANDLERS, type ToolContext } from "./tools/index.js";
+import { GRAPH_RESOURCE, GRAPH_RESOURCE_URI, readGraphResource } from "./resources/graph.js";
+import {
+  TOOL_DEFINITIONS,
+  TOOL_HANDLERS,
+  TOOL_ZOD_SHAPES,
+  type ToolContext,
+} from "./tools/index.js";
 import type { DirectedGraph } from "graphology";
 
 const SERVER_NAME = "foam-notes-mcp";
 const SERVER_VERSION = "0.0.1";
-
-type AnyHandler = (input: unknown, ctx: ToolContext) => Promise<unknown>;
 
 /**
  * Build a {@link ToolContext} from the loaded runtime config and the
@@ -78,100 +70,78 @@ export const buildToolContext = (
 });
 
 /**
- * Construct a fully-configured MCP `Server` with tool and resource request
- * handlers registered. Does NOT connect to a transport — that is the
- * caller's responsibility (and it is deliberate so that tests can inspect
- * the server without any real I/O).
+ * Construct a fully-configured `McpServer` with tool and resource
+ * registrations. Does NOT connect to a transport — that is the caller's
+ * responsibility (and it is deliberate so that tests can inspect the
+ * server without any real I/O).
  */
-// eslint-disable-next-line sonarjs/deprecation -- low-level Server is intentional; see import comment
-export const buildServer = (ctx: ToolContext): Server => {
-  // eslint-disable-next-line sonarjs/deprecation -- low-level Server is intentional; see import comment
-  const server = new Server(
+export const buildServer = (ctx: ToolContext): McpServer => {
+  const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {}, resources: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: TOOL_DEFINITIONS.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-    })),
-  }));
+  // Index TOOL_DEFINITIONS by name so we can fetch each tool's description
+  // alongside the zod shape during registration.
+  const descriptions = new Map(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    const handler = (TOOL_HANDLERS as Record<string, AnyHandler | undefined>)[name];
+  // Register all 12 tools via a single loop over TOOL_HANDLERS. Each entry
+  // pairs a zod raw shape (from TOOL_ZOD_SHAPES) with a typed handler.
+  // TypeScript cannot verify that the zod-inferred input type for tool N
+  // matches the declared input type of handler N without generic coupling
+  // across the TOOL_HANDLERS map — so we bridge the gap with a single
+  // `as never` cast on the input arg inside the dispatch closure. Each
+  // handler re-validates its input internally (see keyword/tools.ts and
+  // graph/tools.ts), and McpServer validates against the zod shape before
+  // the handler runs, so the cast is safe.
+  const toolNames = Object.keys(TOOL_HANDLERS) as (keyof typeof TOOL_HANDLERS)[];
+  for (const name of toolNames) {
+    const description = descriptions.get(name);
+    const inputSchema = TOOL_ZOD_SHAPES[name];
+    const handler = TOOL_HANDLERS[name];
 
-    if (!handler) {
-      throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
-    }
+    server.registerTool(name, { description, inputSchema }, async (input: unknown) => {
+      const result = await handler(input as never, ctx);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    });
+  }
 
-    let result: unknown;
-    try {
-      result = await handler(args ?? {}, ctx);
-    } catch (err) {
-      throw wrapToolError(err);
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  });
-
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    const resources = await listGraphResources();
-    return {
-      resources: resources.map((r) => ({
-        uri: r.uri,
-        name: r.name,
-        description: r.description,
-        mimeType: r.mimeType,
-      })),
-    };
-  });
-
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    const { uri } = request.params;
-    if (uri !== GRAPH_RESOURCE_URI) {
-      throw new McpError(ErrorCode.InvalidRequest, `Unknown resource URI: ${uri}`);
-    }
-    const contents = await readGraphResource({ graph: ctx.graph.graph });
-    return {
-      contents: [
-        {
-          uri: contents.uri,
-          mimeType: contents.mimeType,
-          text: contents.text,
-        },
-      ],
-    };
-  });
+  // `foam://graph` is a static URI resource. McpServer auto-dispatches
+  // `resources/list` and `resources/read` based on registrations, so we
+  // no longer need explicit request handlers for either method.
+  // The first positional arg ("foam-graph") is the registration name
+  // surfaced in `resources/list` as `name`; `GRAPH_RESOURCE.name` is the
+  // human-readable title in the metadata.
+  server.registerResource(
+    "foam-graph",
+    GRAPH_RESOURCE_URI,
+    {
+      title: GRAPH_RESOURCE.name,
+      description: GRAPH_RESOURCE.description,
+      mimeType: GRAPH_RESOURCE.mimeType,
+    },
+    async () => {
+      const contents = await readGraphResource({ graph: ctx.graph.graph });
+      return {
+        contents: [
+          {
+            uri: contents.uri,
+            mimeType: contents.mimeType,
+            text: contents.text,
+          },
+        ],
+      };
+    },
+  );
 
   return server;
-};
-
-/**
- * Convert an arbitrary thrown value from a tool handler into a typed
- * `McpError`. Handlers signal caller-side validation failures by throwing
- * {@link ToolValidationError}; those map to `InvalidParams`. Every other
- * `Error` maps to `InternalError`. `McpError`s pass through unchanged. The
- * original message is preserved in `data.cause` so stack traces remain
- * useful during development.
- */
-const wrapToolError = (err: unknown): McpError => {
-  if (err instanceof McpError) return err;
-
-  const message = err instanceof Error ? err.message : String(err);
-  const code =
-    err instanceof ToolValidationError ? ErrorCode.InvalidParams : ErrorCode.InternalError;
-
-  return new McpError(code, message, err instanceof Error ? { cause: err.message } : undefined);
 };
 
 const logToStderr = (prefix: string, err: unknown): void => {

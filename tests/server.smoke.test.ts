@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// eslint-disable-next-line sonarjs/deprecation -- smoke-tests the low-level Server API by design
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { DirectedGraph } from "graphology";
 
 import { buildServer, buildToolContext } from "../src/server.js";
@@ -39,11 +38,10 @@ describe("server (smoke)", () => {
     expect(ctx.graph.graph).toBe(graph);
   });
 
-  it("buildServer returns an MCP Server instance", () => {
+  it("buildServer returns an MCP McpServer instance", () => {
     const ctx = buildToolContext(fakeConfig, makeGraph());
     const server = buildServer(ctx);
-    // eslint-disable-next-line sonarjs/deprecation -- asserting on the low-level Server API is the purpose of this test
-    expect(server).toBeInstanceOf(Server);
+    expect(server).toBeInstanceOf(McpServer);
   });
 
   it("buildServer is idempotent — repeated calls produce distinct servers", () => {
@@ -51,10 +49,8 @@ describe("server (smoke)", () => {
     const a = buildServer(ctx);
     const b = buildServer(ctx);
     expect(a).not.toBe(b);
-    // eslint-disable-next-line sonarjs/deprecation -- asserting on the low-level Server API is the purpose of this test
-    expect(a).toBeInstanceOf(Server);
-    // eslint-disable-next-line sonarjs/deprecation -- asserting on the low-level Server API is the purpose of this test
-    expect(b).toBeInstanceOf(Server);
+    expect(a).toBeInstanceOf(McpServer);
+    expect(b).toBeInstanceOf(McpServer);
   });
 
   it("TOOL_DEFINITIONS is non-empty (sanity: server would advertise tools)", () => {
