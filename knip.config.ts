@@ -18,13 +18,18 @@ import type { KnipConfig } from "knip";
  * `tests/semantic/store.test.ts` as an entry. The type-only
  * `@types/better-sqlite3` is resolved through the runtime import as well.
  *
+ * Wave 4A commit 3: `@huggingface/transformers` is now imported from
+ * `src/semantic/embedder/transformers.ts`, reached via
+ * `tests/semantic/embedder/transformers.test.ts` (unit) and the
+ * skip-guarded `tests/semantic/embedder/integration.test.ts`.
+ *
  * `graphology-components` and `graphology-traversal` remain declared
  * dependencies for anticipated future-wave usage but are not yet imported,
  * so they stay in `ignoreDependencies` to keep knip clean. Remove from
  * this list once they are wired into a source file.
  *
- * Dependencies still scheduled for later waves (embedder, watcher) remain
- * in `ignoreDependencies`.
+ * Dependencies still scheduled for later waves (watcher) remain in
+ * `ignoreDependencies`.
  */
 const config: KnipConfig = {
   entry: ["tests/**/*.test.ts"],
@@ -33,7 +38,6 @@ const config: KnipConfig = {
   ignoreExportsUsedInFile: true,
   ignoreDependencies: [
     // Wired into entry points in later waves.
-    "@huggingface/transformers",
     "chokidar",
     "micromatch",
     "@types/micromatch",
