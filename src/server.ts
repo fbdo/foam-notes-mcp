@@ -36,12 +36,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { loadConfig, type FoamConfig } from "./config.js";
 import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "./graph/builder.js";
 import { GRAPH_RESOURCE, GRAPH_RESOURCE_URI, readGraphResource } from "./resources/graph.js";
-import {
-  TOOL_DEFINITIONS,
-  TOOL_HANDLERS,
-  TOOL_ZOD_SHAPES,
-  type ToolContext,
-} from "./tools/index.js";
+import { TOOL_HANDLERS, TOOL_METADATA, TOOL_ZOD_SHAPES, type ToolContext } from "./tools/index.js";
 import type { DirectedGraph } from "graphology";
 
 const SERVER_NAME = "foam-notes-mcp";
@@ -81,10 +76,6 @@ export const buildServer = (ctx: ToolContext): McpServer => {
     { capabilities: { tools: {}, resources: {} } },
   );
 
-  // Index TOOL_DEFINITIONS by name so we can fetch each tool's description
-  // alongside the zod shape during registration.
-  const descriptions = new Map(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
-
   // Register all 12 tools via a single loop over TOOL_HANDLERS. Each entry
   // pairs a zod raw shape (from TOOL_ZOD_SHAPES) with a typed handler.
   // TypeScript cannot verify that the zod-inferred input type for tool N
@@ -96,7 +87,7 @@ export const buildServer = (ctx: ToolContext): McpServer => {
   // the handler runs, so the cast is safe.
   const toolNames = Object.keys(TOOL_HANDLERS) as (keyof typeof TOOL_HANDLERS)[];
   for (const name of toolNames) {
-    const description = descriptions.get(name);
+    const description = TOOL_METADATA[name].description;
     const inputSchema = TOOL_ZOD_SHAPES[name];
     const handler = TOOL_HANDLERS[name];
 

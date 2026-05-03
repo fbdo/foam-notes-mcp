@@ -9,7 +9,7 @@ import type { FoamConfig } from "../src/config.js";
 import type { EdgeAttrs, GraphNodeAttrs } from "../src/graph/builder.js";
 import { listGraphResources } from "../src/resources/graph.js";
 import { fixtureRoot } from "./helpers/fixture.js";
-import { TOOL_DEFINITIONS } from "../src/tools/index.js";
+import { TOOL_METADATA } from "../src/tools/index.js";
 
 describe("server (smoke)", () => {
   const VAULT = fixtureRoot(import.meta.url);
@@ -53,8 +53,8 @@ describe("server (smoke)", () => {
     expect(b).toBeInstanceOf(McpServer);
   });
 
-  it("TOOL_DEFINITIONS is non-empty (sanity: server would advertise tools)", () => {
-    expect(TOOL_DEFINITIONS.length).toBeGreaterThan(0);
+  it("TOOL_METADATA is non-empty (sanity: server would advertise tools)", () => {
+    expect(Object.keys(TOOL_METADATA).length).toBeGreaterThan(0);
   });
 
   it("listGraphResources() includes a foam://graph descriptor", async () => {

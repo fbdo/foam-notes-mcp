@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { TOOL_DEFINITIONS, TOOL_HANDLERS, TOOL_ZOD_SHAPES } from "../../src/tools/index.js";
+import { TOOL_HANDLERS, TOOL_METADATA, TOOL_ZOD_SHAPES } from "../../src/tools/index.js";
 
 const EXPECTED_TOOL_NAMES = [
   "search_notes",
@@ -17,58 +17,34 @@ const EXPECTED_TOOL_NAMES = [
   "central_notes",
 ] as const;
 
-describe("TOOL_DEFINITIONS", () => {
+describe("TOOL_METADATA", () => {
   it("contains exactly the 12 keyword + graph tools", () => {
-    const names = TOOL_DEFINITIONS.map((t) => t.name).sort((a, b) => a.localeCompare(b));
+    const names = Object.keys(TOOL_METADATA).sort((a, b) => a.localeCompare(b));
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort((a, b) => a.localeCompare(b)));
-    expect(TOOL_DEFINITIONS.length).toBe(12);
+    expect(names.length).toBe(12);
   });
 
   it("every tool has a non-empty description", () => {
-    for (const tool of TOOL_DEFINITIONS) {
-      expect(typeof tool.description).toBe("string");
-      expect(tool.description.length).toBeGreaterThan(10);
-    }
-  });
-
-  it("every inputSchema is a flat object schema with additionalProperties: false", () => {
-    for (const tool of TOOL_DEFINITIONS) {
-      const schema = tool.inputSchema;
-      expect(schema.type).toBe("object");
-      expect(schema.additionalProperties).toBe(false);
-      expect(typeof schema.properties).toBe("object");
-      expect(Array.isArray(schema.required)).toBe(true);
-    }
-  });
-
-  it("no schema contains $ref or definitions (flat schemas only)", () => {
-    const serialized = JSON.stringify(TOOL_DEFINITIONS);
-    expect(serialized.includes("$ref")).toBe(false);
-    expect(serialized.includes('"definitions"')).toBe(false);
-  });
-
-  it("each required field is declared in properties", () => {
-    for (const tool of TOOL_DEFINITIONS) {
-      const props = tool.inputSchema.properties as Record<string, unknown>;
-      const required = (tool.inputSchema.required as readonly string[]) ?? [];
-      for (const key of required) {
-        expect(Object.prototype.hasOwnProperty.call(props, key)).toBe(true);
-      }
+    for (const [name, meta] of Object.entries(TOOL_METADATA)) {
+      expect(typeof meta.description, `${name}.description should be a string`).toBe("string");
+      expect(meta.description.length, `${name}.description should be meaningful`).toBeGreaterThan(
+        10,
+      );
     }
   });
 });
 
 describe("TOOL_HANDLERS", () => {
-  it("has an entry for every tool definition", () => {
-    for (const tool of TOOL_DEFINITIONS) {
-      expect(TOOL_HANDLERS).toHaveProperty(tool.name);
-      const handler = (TOOL_HANDLERS as Record<string, unknown>)[tool.name];
+  it("has an entry for every tool in TOOL_METADATA", () => {
+    for (const name of Object.keys(TOOL_METADATA)) {
+      expect(TOOL_HANDLERS).toHaveProperty(name);
+      const handler = (TOOL_HANDLERS as Record<string, unknown>)[name];
       expect(typeof handler).toBe("function");
     }
   });
 
-  it("has no extra handlers not declared as tool definitions", () => {
-    const declared = new Set(TOOL_DEFINITIONS.map((t) => t.name));
+  it("has no extra handlers not declared in TOOL_METADATA", () => {
+    const declared = new Set(Object.keys(TOOL_METADATA));
     for (const key of Object.keys(TOOL_HANDLERS)) {
       expect(declared.has(key)).toBe(true);
     }
@@ -97,40 +73,6 @@ describe("TOOL_ZOD_SHAPES", () => {
           schema && typeof (schema as { safeParse?: unknown }).safeParse === "function",
           `${name}.${field} must be a zod schema`,
         ).toBe(true);
-      }
-    }
-  });
-
-  it("required-vs-optional parity with the JSON Schema for every tool", () => {
-    for (const tool of TOOL_DEFINITIONS) {
-      const allShapes = TOOL_ZOD_SHAPES as Record<string, Record<string, z.ZodTypeAny>>;
-      const shape = allShapes[tool.name];
-      expect(shape, `shape exists for ${tool.name}`).toBeDefined();
-      if (shape === undefined) continue;
-
-      const jsonRequired = new Set(
-        ((tool.inputSchema.required as readonly string[] | undefined) ?? []).map((k) => String(k)),
-      );
-      const jsonProperties = Object.keys(
-        (tool.inputSchema.properties as Record<string, unknown> | undefined) ?? {},
-      );
-
-      // Property keys must match 1:1 between the JSON Schema properties and
-      // the zod raw shape.
-      const shapeKeys = Object.keys(shape).sort((a, b) => a.localeCompare(b));
-      expect(shapeKeys).toEqual([...jsonProperties].sort((a, b) => a.localeCompare(b)));
-
-      // Required iff not wrapped in `.optional()`.
-      for (const key of shapeKeys) {
-        const fieldSchema = shape[key];
-        expect(fieldSchema, `${tool.name}.${key} field schema exists`).toBeDefined();
-        if (fieldSchema === undefined) continue;
-        const isOptional = fieldSchema.safeParse(undefined).success;
-        const expectedRequired = jsonRequired.has(key);
-        expect(
-          isOptional,
-          `${tool.name}.${key} optionality mismatch (JSON Schema required=${String(expectedRequired)})`,
-        ).toBe(!expectedRequired);
       }
     }
   });
