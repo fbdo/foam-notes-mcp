@@ -76,19 +76,27 @@ import {
   type SemanticSearchOutput,
   type SemanticToolContext,
 } from "../semantic/tools.js";
+import {
+  hybridSearch,
+  type HybridSearchInput,
+  type HybridSearchOutput,
+  type HybridToolContext,
+} from "../hybrid/tools.js";
 
 export type { SemanticToolContext } from "../semantic/tools.js";
+export type { HybridToolContext } from "../hybrid/tools.js";
 
 /**
  * Combined context for tool handlers. The server builds all sub-contexts
  * once at startup and passes this widened shape into every dispatch.
  * Keyword tools consume `ctx.keyword`; graph tools consume `ctx.graph`;
- * semantic tools consume `ctx.semantic`.
+ * semantic tools consume `ctx.semantic`; hybrid tools consume `ctx.hybrid`.
  */
 export interface ToolContext {
   readonly keyword: KeywordToolContext;
   readonly graph: GraphToolContext;
   readonly semantic: SemanticToolContext;
+  readonly hybrid: HybridToolContext;
 }
 
 /** Per-tool handler signature. Context is provided by the server layer. */
@@ -159,6 +167,10 @@ export const TOOL_METADATA = {
     description:
       "Report semantic-index status: note/chunk counts, embedder identity, last-built timestamp, and a best-effort up-to-date signal (walks the vault to compare fingerprints).",
   },
+  hybrid_search: {
+    description:
+      "Hybrid search fusing semantic, keyword, and PageRank signals via reciprocal-rank fusion. Returns per-hit score breakdown with semantic/keyword ranks and PageRank contribution. weights default {sem: 0.6, kw: 0.2, graph: 0.2} (graph is the PageRank rerank coefficient, not a separate fusion list).",
+  },
 } as const;
 
 /**
@@ -188,6 +200,7 @@ export const TOOL_HANDLERS: {
   readonly semantic_search: ToolHandler<SemanticSearchInput, SemanticSearchOutput>;
   readonly build_index: ToolHandler<BuildIndexInput, BuildIndexOutput>;
   readonly index_status: ToolHandler<IndexStatusInput, IndexStatusOutput>;
+  readonly hybrid_search: ToolHandler<HybridSearchInput, HybridSearchOutput>;
 } = {
   search_notes: (input, ctx) => searchNotes(input, ctx.keyword),
   find_by_frontmatter: (input, ctx) => findByFrontmatter(input, ctx.keyword),
@@ -209,6 +222,7 @@ export const TOOL_HANDLERS: {
   semantic_search: (input, ctx) => semanticSearch(input, ctx.semantic),
   build_index: (input, ctx) => runBuildIndex(input, ctx.semantic),
   index_status: (_input, ctx) => indexStatus({}, ctx.semantic),
+  hybrid_search: (input, ctx) => hybridSearch(input, ctx.hybrid),
 } as const;
 
 /**
@@ -279,4 +293,22 @@ export const TOOL_ZOD_SHAPES = {
     force: z.boolean().optional(),
   },
   index_status: {},
+  hybrid_search: {
+    query: z.string().min(1),
+    limit: z.number().int().min(1).optional(),
+    weights: z
+      .object({
+        sem: z.number().min(0).optional(),
+        kw: z.number().min(0).optional(),
+        graph: z.number().min(0).optional(),
+      })
+      .optional(),
+    min_score: z.number().optional(),
+    sources: z
+      .object({
+        semantic: z.boolean().optional(),
+        keyword: z.boolean().optional(),
+      })
+      .optional(),
+  },
 } as const;

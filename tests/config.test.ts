@@ -114,4 +114,47 @@ describe("loadConfig", () => {
 
     expect(() => loadConfig({ FOAM_VAULT_PATH: dir })).toThrow(/does not support Windows/);
   });
+
+  it("defaults FOAM_WATCHER to true when unset", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir });
+    expect(cfg.watcher).toBe(true);
+  });
+
+  it("parses FOAM_WATCHER='0' as false", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir, FOAM_WATCHER: "0" });
+    expect(cfg.watcher).toBe(false);
+  });
+
+  it("parses FOAM_WATCHER='1' as true", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir, FOAM_WATCHER: "1" });
+    expect(cfg.watcher).toBe(true);
+  });
+
+  it("parses FOAM_WATCHER='false' (case-insensitive) as false", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir, FOAM_WATCHER: "FALSE" });
+    expect(cfg.watcher).toBe(false);
+  });
+
+  it("parses FOAM_WATCHER='no' as false and 'yes' as true", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    expect(loadConfig({ FOAM_VAULT_PATH: dir, FOAM_WATCHER: "no" }).watcher).toBe(false);
+    expect(loadConfig({ FOAM_VAULT_PATH: dir, FOAM_WATCHER: "yes" }).watcher).toBe(true);
+  });
+
+  it("throws when FOAM_WATCHER has an invalid value", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_WATCHER: "maybe" })).toThrow(
+      /FOAM_WATCHER='maybe' is not a valid boolean/,
+    );
+  });
 });

@@ -28,7 +28,11 @@ import type { KnipConfig } from "knip";
  * so they stay in `ignoreDependencies` to keep knip clean. Remove from
  * this list once they are wired into a source file.
  *
- * Dependencies still scheduled for later waves (watcher) remain in
+ * Dependencies still scheduled for later waves (micromatch) remain in
+ * `ignoreDependencies`.
+ *
+ * Wave 5 commit 3: `chokidar` is now reached via `src/watcher.ts`
+ * (imported by `src/server.ts`), so it is no longer in
  * `ignoreDependencies`.
  */
 const config: KnipConfig = {
@@ -38,7 +42,6 @@ const config: KnipConfig = {
   ignoreExportsUsedInFile: true,
   ignoreDependencies: [
     // Wired into entry points in later waves.
-    "chokidar",
     "micromatch",
     "@types/micromatch",
   ],

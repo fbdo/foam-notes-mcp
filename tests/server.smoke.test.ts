@@ -1,11 +1,19 @@
 import { describe, it, expect } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { mkdtempSync, rmSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { DirectedGraph } from "graphology";
 
-import { buildServer, buildToolContext, type SemanticDeps } from "../src/server.js";
+import {
+  buildServer,
+  buildSemanticDeps,
+  buildToolContext,
+  initVaultWatcher,
+  listVaultMarkdown,
+  type SemanticDeps,
+} from "../src/server.js";
 import type { FoamConfig } from "../src/config.js";
 import type { EdgeAttrs, GraphNodeAttrs } from "../src/graph/builder.js";
 import { listGraphResources } from "../src/resources/graph.js";
@@ -23,6 +31,7 @@ describe("server (smoke)", () => {
     mocPattern: "*-MOC.md",
     ripgrepPath: "/usr/bin/rg",
     embedder: "transformers",
+    watcher: false,
   };
 
   const makeGraph = (): DirectedGraph<GraphNodeAttrs, EdgeAttrs> =>
@@ -83,6 +92,21 @@ describe("server (smoke)", () => {
     expect(ctx.semantic.store).toBe(deps.store);
   });
 
+  it("buildToolContext composes ctx.hybrid from the keyword/graph/semantic sub-contexts", async () => {
+    const graph = makeGraph();
+    const deps = await makeSemanticDeps();
+    const ctx = buildToolContext(fakeConfig, graph, deps);
+    // Hybrid reuses the same values we verified above — no duplication.
+    expect(ctx.hybrid.keyword.vaultPath).toBe(fakeConfig.vaultPath);
+    expect(ctx.hybrid.keyword.ripgrepPath).toBe(fakeConfig.ripgrepPath);
+    expect(ctx.hybrid.graph.vaultPath).toBe(fakeConfig.vaultPath);
+    expect(ctx.hybrid.graph.graph).toBe(graph);
+    expect(ctx.hybrid.semantic.vaultPath).toBe(fakeConfig.vaultPath);
+    expect(ctx.hybrid.semantic.mocPattern).toBe(fakeConfig.mocPattern);
+    expect(ctx.hybrid.semantic.embedder).toBe(deps.embedder);
+    expect(ctx.hybrid.semantic.store).toBe(deps.store);
+  });
+
   it("buildServer returns an MCP McpServer instance", async () => {
     const deps = await makeSemanticDeps();
     const ctx = buildToolContext(fakeConfig, makeGraph(), deps);
@@ -100,20 +124,89 @@ describe("server (smoke)", () => {
     expect(b).toBeInstanceOf(McpServer);
   });
 
-  it("TOOL_METADATA exposes exactly 15 tools (6 keyword + 6 graph + 3 semantic)", () => {
-    expect(Object.keys(TOOL_METADATA).length).toBe(15);
+  it("TOOL_METADATA exposes exactly 16 tools (6 keyword + 6 graph + 3 semantic + 1 hybrid)", () => {
+    expect(Object.keys(TOOL_METADATA).length).toBe(16);
   });
 
-  it("TOOL_HANDLERS includes the 3 new semantic tools", () => {
+  it("TOOL_HANDLERS includes the 3 semantic tools and the hybrid tool", () => {
     expect(TOOL_HANDLERS).toHaveProperty("semantic_search");
     expect(TOOL_HANDLERS).toHaveProperty("build_index");
     expect(TOOL_HANDLERS).toHaveProperty("index_status");
+    expect(TOOL_HANDLERS).toHaveProperty("hybrid_search");
   });
 
   it("listGraphResources() includes a foam://graph descriptor", async () => {
     const resources = await listGraphResources();
     const found = resources.some((r) => r.uri === "foam://graph");
     expect(found).toBe(true);
+  });
+
+  it("listVaultMarkdown returns absolute, sorted .md paths in the vault", async () => {
+    // Use the real fixture vault directly (fixtureRoot() in this file
+    // resolves one directory too high because the smoke test lives at
+    // the `tests/` root, not in a subfolder). Every other test in this
+    // file passes VAULT through a config that never actually reads
+    // files from it.
+    const fixture = fileURLToPath(new URL("./fixtures/vault/", import.meta.url));
+    const files = await listVaultMarkdown(fixture);
+    expect(files.length).toBeGreaterThan(0);
+    for (const f of files) {
+      expect(f.endsWith(".md")).toBe(true);
+      expect(f.startsWith(fixture)).toBe(true);
+    }
+    const sorted = [...files].sort((a, b) => a.localeCompare(b));
+    expect(files).toEqual(sorted);
+  });
+
+  it("listVaultMarkdown returns an empty array for a vault with no markdown", async () => {
+    const empty = mkdtempSync(join(tmpdir(), "foam-smoke-empty-"));
+    try {
+      const files = await listVaultMarkdown(empty);
+      expect(files).toEqual([]);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  it("buildSemanticDeps opens a SemanticStore and returns an embedder", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "foam-smoke-sem-deps-"));
+    const config: FoamConfig = {
+      vaultPath: VAULT,
+      cacheDir,
+      mocPattern: "*-MOC.md",
+      ripgrepPath: "/usr/bin/rg",
+      embedder: "transformers",
+      watcher: false,
+    };
+    try {
+      const deps = await buildSemanticDeps(config);
+      expect(deps.embedder.info.provider).toBe("transformers");
+      expect(deps.store).toBeDefined();
+      await deps.store.close();
+      await deps.embedder.close();
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("initVaultWatcher returns undefined when config.watcher is false", async () => {
+    const deps = await makeSemanticDeps();
+    const watcher = await initVaultWatcher({ ...fakeConfig, watcher: false }, makeGraph(), deps);
+    expect(watcher).toBeUndefined();
+  });
+
+  it("initVaultWatcher starts and returns a live watcher when config.watcher is true", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/vault/", import.meta.url));
+    const deps = await makeSemanticDeps();
+    const watcher = await initVaultWatcher(
+      { ...fakeConfig, vaultPath: fixture, watcher: true },
+      makeGraph(),
+      deps,
+    );
+    expect(watcher).toBeDefined();
+    expect(watcher!.isRunning()).toBe(true);
+    await watcher!.stop();
+    expect(watcher!.isRunning()).toBe(false);
   });
 
   // Best-effort cleanup: close any stores we opened, remove tmpdirs.

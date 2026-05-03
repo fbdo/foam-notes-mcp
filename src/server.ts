@@ -36,22 +36,25 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ProgressNotification } from "@modelcontextprotocol/sdk/types.js";
+import fg from "fast-glob";
 
 import { loadConfig, type FoamConfig } from "./config.js";
 import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "./graph/builder.js";
 import { GRAPH_RESOURCE, GRAPH_RESOURCE_URI, readGraphResource } from "./resources/graph.js";
+import { buildVaultIndex } from "./resolver.js";
 import { createEmbedder } from "./semantic/embedder/index.js";
 import type { Embedder } from "./semantic/embedder/types.js";
 import { SemanticStore } from "./semantic/store.js";
 import { runBuildIndex, type BuildIndexInput } from "./semantic/tools.js";
 import type { IndexProgress } from "./semantic/index.js";
 import { TOOL_HANDLERS, TOOL_METADATA, TOOL_ZOD_SHAPES, type ToolContext } from "./tools/index.js";
+import { createVaultWatcher, type VaultWatcher } from "./watcher.js";
 import type { DirectedGraph } from "graphology";
 
 const SERVER_NAME = "foam-notes-mcp";
@@ -72,6 +75,11 @@ export interface SemanticDeps {
  * Build a {@link ToolContext} from the loaded runtime config, the prebuilt
  * vault graph, and the pre-opened semantic dependencies.
  *
+ * The hybrid sub-context is composed from the keyword/graph/semantic
+ * sub-contexts — hybrid_search reuses them directly rather than
+ * duplicating their fields, so changes in any single feature layer's
+ * dependencies don't ripple through this function.
+ *
  * Exposed for testing so that a smoke test can construct a server instance
  * without having to populate every `FoamConfig` field or scan a real vault.
  */
@@ -79,23 +87,33 @@ export const buildToolContext = (
   config: FoamConfig,
   graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
   semantic: SemanticDeps,
-): ToolContext => ({
-  keyword: {
+): ToolContext => {
+  const keyword = {
     vaultPath: config.vaultPath,
     mocPattern: config.mocPattern,
     ripgrepPath: config.ripgrepPath,
-  },
-  graph: {
+  };
+  const graphCtx = {
     vaultPath: config.vaultPath,
     graph,
-  },
-  semantic: {
+  };
+  const semanticCtx = {
     vaultPath: config.vaultPath,
     mocPattern: config.mocPattern,
     embedder: semantic.embedder,
     store: semantic.store,
-  },
-});
+  };
+  return {
+    keyword,
+    graph: graphCtx,
+    semantic: semanticCtx,
+    hybrid: {
+      keyword,
+      graph: graphCtx,
+      semantic: semanticCtx,
+    },
+  };
+};
 
 /**
  * Shape of the extra argument the SDK passes to a registered tool handler.
@@ -252,7 +270,7 @@ const logToStderr = (prefix: string, err: unknown): void => {
 };
 
 /**
- * Construct the semantic dependencies for the server. The store is opened
+ * Build the semantic dependencies for the server. The store is opened
  * eagerly (cheap: just a sqlite file open + schema DDL), but the embedder
  * only touches disk/network on its first `embed()` call — so startup stays
  * fast and `index_status` can be called without paying any model-load cost.
@@ -260,8 +278,10 @@ const logToStderr = (prefix: string, err: unknown): void => {
  * The cache subdirectory layout is fixed:
  *   - `<cacheDir>/semantic/index.sqlite`  — sqlite-vec index
  *   - `<cacheDir>/semantic/models/`       — HF model cache (Decision #11)
+ *
+ * Exported for testing; `main()` is the production caller.
  */
-const buildSemanticDeps = async (config: FoamConfig): Promise<SemanticDeps> => {
+export const buildSemanticDeps = async (config: FoamConfig): Promise<SemanticDeps> => {
   const semanticDir = join(config.cacheDir, "semantic");
   const modelsDir = join(semanticDir, "models");
   const storePath = join(semanticDir, "index.sqlite");
@@ -282,6 +302,60 @@ const buildSemanticDeps = async (config: FoamConfig): Promise<SemanticDeps> => {
   });
   await store.open();
   return { embedder, store };
+};
+
+/**
+ * Recursively list every `.md` file under a vault root, returning absolute
+ * paths sorted for stable ordering. Kept as a local helper (rather than
+ * reaching into `src/graph/builder.ts`'s private `listMarkdownFiles`) so
+ * the server's watcher wiring does not depend on graph-layer internals.
+ *
+ * Exported for testing — the watcher-boot path in `main()` is otherwise
+ * only exercised by the integration smoke test.
+ */
+export const listVaultMarkdown = async (vaultPath: string): Promise<string[]> => {
+  const files = await fg("**/*.md", {
+    cwd: vaultPath,
+    absolute: true,
+    dot: false,
+    onlyFiles: true,
+    followSymbolicLinks: false,
+  });
+  return files.map((f) => resolvePath(f)).sort((a, b) => a.localeCompare(b));
+};
+
+/**
+ * Initialize the file watcher if `config.watcher` is `true`. Returns the
+ * live watcher handle (started) or `undefined` when watching is disabled.
+ *
+ * Exported for testing — `main()` calls this during boot. Failures
+ * propagate so `main()` can log + exit with a non-zero code.
+ */
+export const initVaultWatcher = async (
+  config: FoamConfig,
+  graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
+  semantic: SemanticDeps,
+): Promise<VaultWatcher | undefined> => {
+  if (!config.watcher) {
+    console.error(`[${SERVER_NAME}] watcher disabled (FOAM_WATCHER=0)`);
+    return undefined;
+  }
+  const vaultFiles = await listVaultMarkdown(config.vaultPath);
+  const watcher = createVaultWatcher({
+    vaultPath: config.vaultPath,
+    mocPattern: config.mocPattern,
+    graph,
+    vaultIndex: buildVaultIndex(vaultFiles),
+    store: semantic.store,
+    embedder: semantic.embedder,
+    debounceMs: 200,
+    onError: (err, change) => {
+      logToStderr(`watcher error (${change?.path ?? "<no path>"})`, err);
+    },
+  });
+  await watcher.start();
+  console.error(`[${SERVER_NAME}] watcher started (debounce 200ms)`);
+  return watcher;
 };
 
 const main = async (): Promise<void> => {
@@ -317,12 +391,34 @@ const main = async (): Promise<void> => {
   const server = buildServer(ctx);
   const transport = new StdioServerTransport();
 
+  // File watcher: opt-out via FOAM_WATCHER=0 (PLAN Decision #12).
+  // The watcher uses a per-path, last-event-wins 200ms debounce and routes
+  // markdown changes into both the graph and semantic incremental updaters.
+  // Construction happens after the graph + semantic store are ready so both
+  // sides of the dispatch are safe to call on the first fired event.
+  let watcher: VaultWatcher | undefined;
+  try {
+    watcher = await initVaultWatcher(config, graph, semantic);
+  } catch (err) {
+    logToStderr("failed to start file watcher", err);
+    process.exit(1);
+  }
+
   const shutdown = (signal: NodeJS.Signals): void => {
     console.error(`[${SERVER_NAME}] received ${signal}, shutting down`);
-    // Best-effort: close the MCP server, then the semantic store, then the
-    // embedder. Each step swallows its own failure so a hang in one piece
-    // doesn't block the others (we still exit on a fixed deadline below).
+    // Best-effort: stop the watcher first so pending debounced events
+    // flush cleanly and no new dispatches race with the store close.
+    // Then close the MCP server, the semantic store, and the embedder.
+    // Each step swallows its own failure so a hang in one piece doesn't
+    // block the others (we still exit on a fixed deadline below).
     const closeAll = async (): Promise<void> => {
+      if (watcher !== undefined) {
+        try {
+          await watcher.stop();
+        } catch (err) {
+          logToStderr("error stopping watcher", err);
+        }
+      }
       try {
         await server.close();
       } catch (err) {

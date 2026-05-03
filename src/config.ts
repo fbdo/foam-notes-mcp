@@ -39,6 +39,12 @@ export interface FoamConfig {
    * fatal configuration error in v0.1 — see {@link SUPPORTED_EMBEDDER_PROVIDERS}.
    */
   readonly embedder: SupportedEmbedderProvider;
+  /**
+   * Whether to start the vault file watcher on server boot. Default `true`.
+   * Opt out via `FOAM_WATCHER=0` (accepted: `0`/`false`/`no`). PLAN
+   * Decision #12.
+   */
+  readonly watcher: boolean;
 }
 
 const DEFAULT_CACHE_DIR_REL = "./.foam-mcp/";
@@ -59,8 +65,9 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): FoamConfig => 
   const mocPattern = resolveMocPattern(env.VAULT_MOC_PATTERN);
   const ripgrepPath = verifyRipgrep();
   const embedder = resolveEmbedder(env.FOAM_EMBEDDER);
+  const watcher = parseBool(env.FOAM_WATCHER, "FOAM_WATCHER", true);
 
-  return { vaultPath, cacheDir, mocPattern, ripgrepPath, embedder };
+  return { vaultPath, cacheDir, mocPattern, ripgrepPath, embedder, watcher };
 };
 
 const rejectWindows = (): void => {
@@ -132,4 +139,25 @@ const verifyRipgrep = (): string => {
     throw new Error(`ripgrep path is not a regular file: ${rgPath}`);
   }
   return rgPath;
+};
+
+/**
+ * Parse a boolean env var with a fixed set of accepted truthy/falsy values.
+ *
+ * - Unset, empty, or whitespace-only → `defaultValue`.
+ * - Truthy: `1`, `true`, `yes` (case-insensitive).
+ * - Falsy: `0`, `false`, `no` (case-insensitive).
+ * - Anything else throws with a clear "accepted values" message so users
+ *   can't silently typo their way past the opt-out (PLAN Decision #12).
+ */
+const parseBool = (raw: string | undefined, envName: string, defaultValue: boolean): boolean => {
+  if (raw === undefined) return defaultValue;
+  const trimmed = raw.trim();
+  if (trimmed === "") return defaultValue;
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "1" || lowered === "true" || lowered === "yes") return true;
+  if (lowered === "0" || lowered === "false" || lowered === "no") return false;
+  throw new Error(
+    `${envName}='${raw}' is not a valid boolean. Accepted values: 1/true/yes or 0/false/no.`,
+  );
 };

@@ -73,6 +73,7 @@ const VALID_INPUTS: Record<string, Record<string, unknown>> = {
   semantic_search: { query: "example" },
   build_index: {},
   index_status: {},
+  hybrid_search: { query: "example" },
 };
 
 // Connect once for the whole suite — one round-trip for tools/list drives
@@ -89,6 +90,7 @@ beforeAll(async () => {
     mocPattern: "*-MOC.md",
     ripgrepPath: "/usr/bin/rg",
     embedder: "transformers",
+    watcher: false,
   };
   const graph = new DirectedGraph<GraphNodeAttrs, EdgeAttrs>();
 
@@ -135,8 +137,8 @@ afterAll(async () => {
 });
 
 describe("wire schemas (tools/list)", () => {
-  it("server advertises all 15 tools", () => {
-    expect(listed.size).toBe(15);
+  it("server advertises all 16 tools", () => {
+    expect(listed.size).toBe(16);
     for (const name of Object.keys(TOOL_ZOD_SHAPES)) {
       expect(listed.has(name), `server should advertise ${name}`).toBe(true);
     }
@@ -191,5 +193,40 @@ describe("wire schemas (tools/list)", () => {
     const input = VALID_INPUTS[name];
     expect(input, `VALID_INPUTS missing entry for ${name}`).toBeDefined();
     expect(() => schema.parse(input)).not.toThrow();
+  });
+
+  it("hybrid_search: rejects empty query", () => {
+    const schema = z.object(TOOL_ZOD_SHAPES.hybrid_search);
+    expect(() => schema.parse({ query: "" })).toThrow();
+  });
+
+  it("hybrid_search: rejects negative semantic weight", () => {
+    const schema = z.object(TOOL_ZOD_SHAPES.hybrid_search);
+    expect(() => schema.parse({ query: "x", weights: { sem: -0.1 } })).toThrow();
+  });
+
+  it("hybrid_search: rejects negative keyword weight", () => {
+    const schema = z.object(TOOL_ZOD_SHAPES.hybrid_search);
+    expect(() => schema.parse({ query: "x", weights: { kw: -1 } })).toThrow();
+  });
+
+  it("hybrid_search: rejects negative graph weight", () => {
+    const schema = z.object(TOOL_ZOD_SHAPES.hybrid_search);
+    expect(() => schema.parse({ query: "x", weights: { graph: -0.5 } })).toThrow();
+  });
+
+  it("hybrid_search: accepts fully-specified valid input (weights, sources, min_score, limit)", () => {
+    const schema = z.object(TOOL_ZOD_SHAPES.hybrid_search);
+    const parsed = schema.parse({
+      query: "graph",
+      limit: 5,
+      weights: { sem: 0.7, kw: 0.2, graph: 0.1 },
+      min_score: 0.01,
+      sources: { semantic: true, keyword: false },
+    });
+    expect(parsed.query).toBe("graph");
+    expect(parsed.limit).toBe(5);
+    expect(parsed.weights).toEqual({ sem: 0.7, kw: 0.2, graph: 0.1 });
+    expect(parsed.sources).toEqual({ semantic: true, keyword: false });
   });
 });

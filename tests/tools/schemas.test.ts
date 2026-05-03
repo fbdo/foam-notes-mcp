@@ -18,13 +18,14 @@ const EXPECTED_TOOL_NAMES = [
   "semantic_search",
   "build_index",
   "index_status",
+  "hybrid_search",
 ] as const;
 
 describe("TOOL_METADATA", () => {
-  it("contains exactly the 15 keyword + graph + semantic tools", () => {
+  it("contains exactly the 16 keyword + graph + semantic + hybrid tools", () => {
     const names = Object.keys(TOOL_METADATA).sort((a, b) => a.localeCompare(b));
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort((a, b) => a.localeCompare(b)));
-    expect(names.length).toBe(15);
+    expect(names.length).toBe(16);
   });
 
   it("every tool has a non-empty description", () => {
@@ -55,11 +56,11 @@ describe("TOOL_HANDLERS", () => {
 });
 
 describe("TOOL_ZOD_SHAPES", () => {
-  it("exports a raw shape for every tool handler (15 total)", () => {
+  it("exports a raw shape for every tool handler (16 total)", () => {
     const handlerKeys = Object.keys(TOOL_HANDLERS).sort((a, b) => a.localeCompare(b));
     const shapeKeys = Object.keys(TOOL_ZOD_SHAPES).sort((a, b) => a.localeCompare(b));
     expect(shapeKeys).toEqual(handlerKeys);
-    expect(shapeKeys.length).toBe(15);
+    expect(shapeKeys.length).toBe(16);
   });
 
   it("every entry is a plain object of zod schemas (raw-shape contract)", () => {
