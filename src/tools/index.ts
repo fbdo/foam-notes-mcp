@@ -8,7 +8,16 @@
  *
  * This module MAY import from `keyword/` and `graph/`. It MUST NOT import from
  * `server.ts` or from any future feature layer.
+ *
+ * MCP SDK migration (commit 2 of 4): `TOOL_ZOD_SHAPES` exports the same
+ * twelve input contracts as zod raw shapes, for consumption by
+ * `McpServer.registerTool` in commit 3. The hand-written JSON Schemas in
+ * `TOOL_DEFINITIONS` remain the source of truth for the current
+ * low-level `Server` path in `server.ts` and will be deleted in commit 3
+ * once `server.ts` switches over.
  */
+
+import { z } from "zod";
 
 import {
   findByFrontmatter,
@@ -371,4 +380,69 @@ export const TOOL_HANDLERS: {
   orphans: (input, ctx) => orphans(input, ctx.graph),
   placeholders: (input, ctx) => placeholders(input, ctx.graph),
   central_notes: (input, ctx) => centralNotes(input, ctx.graph),
+} as const;
+
+/**
+ * Zod raw shapes for each tool's input schema.
+ *
+ * A "raw shape" is a plain object whose values are zod schemas (not a
+ * full `z.object(...)`). `McpServer.registerTool` — used after commit 3
+ * of the SDK migration — expects raw shapes and wraps them into a
+ * `z.object({...}).strict()` internally, so `additionalProperties: false`
+ * semantics carry over without extra work.
+ *
+ * Each entry mirrors the structural contract of the corresponding
+ * `TOOL_DEFINITIONS[*].inputSchema`:
+ *   - Fields listed in the JSON Schema's `required` array are REQUIRED
+ *     (no `.optional()` in zod).
+ *   - All other fields are `.optional()`.
+ *   - Constraint parity: `minLength`, `minimum`, `maximum`, `enum` are
+ *     preserved via `.min()`, `.max()`, `z.enum([...])`.
+ *
+ * Currently only consumed by `tests/tools/schemas.test.ts`. Commit 3
+ * wires this into `server.ts` when the migration to `McpServer` lands.
+ */
+export const TOOL_ZOD_SHAPES = {
+  search_notes: {
+    query: z.string().min(1),
+    limit: z.number().int().min(0).optional(),
+    contextLines: z.number().int().min(0).optional(),
+  },
+  find_by_frontmatter: {
+    key: z.string().min(1),
+    value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+    operator: z.enum(["equals", "contains", "exists"]).optional(),
+  },
+  find_unchecked_tasks: {
+    pathGlob: z.string().optional(),
+    headingFilter: z.string().optional(),
+  },
+  resolve_wikilink: {
+    target: z.string().min(1),
+  },
+  get_note: {
+    path: z.string().min(1),
+    includeBody: z.boolean().optional(),
+  },
+  get_vault_stats: {},
+  list_backlinks: {
+    note: z.string().min(1),
+  },
+  neighbors: {
+    note: z.string().min(1),
+    depth: z.number().int().min(1).max(3).optional(),
+    direction: z.enum(["out", "in", "both"]).optional(),
+  },
+  shortest_path: {
+    from: z.string().min(1),
+    to: z.string().min(1),
+    max_hops: z.number().int().min(1).optional(),
+  },
+  orphans: {},
+  placeholders: {},
+  central_notes: {
+    algorithm: z.enum(["pagerank", "degree"]),
+    limit: z.number().int().min(1).optional(),
+    folder: z.string().optional(),
+  },
 } as const;
