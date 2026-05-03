@@ -69,6 +69,36 @@ describe("loadConfig", () => {
     expect(cfg.mocPattern).toBe("!(*-index)-*MOC*.md");
   });
 
+  it("defaults FOAM_EMBEDDER to 'transformers' when unset", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir });
+    expect(cfg.embedder).toBe("transformers");
+  });
+
+  it("accepts FOAM_EMBEDDER='transformers' explicitly", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir, FOAM_EMBEDDER: "transformers" });
+    expect(cfg.embedder).toBe("transformers");
+  });
+
+  it("rejects unsupported FOAM_EMBEDDER values (ollama deferred to v0.2)", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_EMBEDDER: "ollama" })).toThrow(
+      /FOAM_EMBEDDER='ollama' is not supported/,
+    );
+  });
+
+  it("rejects unknown FOAM_EMBEDDER values", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_EMBEDDER: "not-a-provider" })).toThrow(
+      /FOAM_EMBEDDER='not-a-provider' is not supported/,
+    );
+  });
+
   it("rejects Windows at startup (mocked process.platform)", () => {
     const dir = makeTempDir();
     cleanup.push(() => rmSync(dir, { recursive: true, force: true }));

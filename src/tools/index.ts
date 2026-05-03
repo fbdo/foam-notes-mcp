@@ -64,16 +64,31 @@ import {
   type ShortestPathInput,
   type ShortestPathOutput,
 } from "../graph/tools.js";
+import {
+  indexStatus,
+  runBuildIndex,
+  semanticSearch,
+  type BuildIndexInput,
+  type BuildIndexOutput,
+  type IndexStatusInput,
+  type IndexStatusOutput,
+  type SemanticSearchInput,
+  type SemanticSearchOutput,
+  type SemanticToolContext,
+} from "../semantic/tools.js";
+
+export type { SemanticToolContext } from "../semantic/tools.js";
 
 /**
- * Combined context for tool handlers. The server builds both sub-contexts
+ * Combined context for tool handlers. The server builds all sub-contexts
  * once at startup and passes this widened shape into every dispatch.
- * Keyword tools only consume `ctx.keyword`; graph tools only consume
- * `ctx.graph`.
+ * Keyword tools consume `ctx.keyword`; graph tools consume `ctx.graph`;
+ * semantic tools consume `ctx.semantic`.
  */
 export interface ToolContext {
   readonly keyword: KeywordToolContext;
   readonly graph: GraphToolContext;
+  readonly semantic: SemanticToolContext;
 }
 
 /** Per-tool handler signature. Context is provided by the server layer. */
@@ -132,6 +147,18 @@ export const TOOL_METADATA = {
     description:
       "Rank notes by centrality using PageRank or total degree. Optionally restrict to notes under a given folder prefix.",
   },
+  semantic_search: {
+    description:
+      "Semantic similarity search over the vault. Embeds the query, runs KNN over chunk vectors, and returns top hits with optional folder/tag/min-score filters. Requires `build_index` to have been run at least once.",
+  },
+  build_index: {
+    description:
+      "Build or refresh the semantic index. Incremental by default (only changed notes are re-embedded); pass `force: true` to wipe and rebuild from scratch. Emits MCP progress notifications when the caller supplies a progress token.",
+  },
+  index_status: {
+    description:
+      "Report semantic-index status: note/chunk counts, embedder identity, last-built timestamp, and a best-effort up-to-date signal (walks the vault to compare fingerprints).",
+  },
 } as const;
 
 /**
@@ -158,6 +185,9 @@ export const TOOL_HANDLERS: {
   readonly orphans: ToolHandler<OrphansInput, OrphansOutput>;
   readonly placeholders: ToolHandler<PlaceholdersInput, PlaceholdersOutput>;
   readonly central_notes: ToolHandler<CentralNotesInput, CentralNotesOutput>;
+  readonly semantic_search: ToolHandler<SemanticSearchInput, SemanticSearchOutput>;
+  readonly build_index: ToolHandler<BuildIndexInput, BuildIndexOutput>;
+  readonly index_status: ToolHandler<IndexStatusInput, IndexStatusOutput>;
 } = {
   search_notes: (input, ctx) => searchNotes(input, ctx.keyword),
   find_by_frontmatter: (input, ctx) => findByFrontmatter(input, ctx.keyword),
@@ -171,6 +201,14 @@ export const TOOL_HANDLERS: {
   orphans: (input, ctx) => orphans(input, ctx.graph),
   placeholders: (input, ctx) => placeholders(input, ctx.graph),
   central_notes: (input, ctx) => centralNotes(input, ctx.graph),
+  // Semantic tools dispatch into `ctx.semantic`. Note: `build_index`'s
+  // progress callback is wired at the server layer (not here) — the
+  // generic handler signature doesn't carry a progress hook. The server
+  // registers `build_index` out of the generic loop so it can adapt the
+  // MCP progress token into an SDK-agnostic `onProgress` callback.
+  semantic_search: (input, ctx) => semanticSearch(input, ctx.semantic),
+  build_index: (input, ctx) => runBuildIndex(input, ctx.semantic),
+  index_status: (_input, ctx) => indexStatus({}, ctx.semantic),
 } as const;
 
 /**
@@ -230,4 +268,15 @@ export const TOOL_ZOD_SHAPES = {
     limit: z.number().int().min(1).optional(),
     folder: z.string().optional(),
   },
+  semantic_search: {
+    query: z.string().min(1),
+    limit: z.number().int().min(1).optional(),
+    folder: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    min_score: z.number().min(-1).max(1).optional(),
+  },
+  build_index: {
+    force: z.boolean().optional(),
+  },
+  index_status: {},
 } as const;

@@ -33,13 +33,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { DirectedGraph } from "graphology";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
-import { buildServer, buildToolContext } from "../../src/server.js";
+import { buildServer, buildToolContext, type SemanticDeps } from "../../src/server.js";
 import type { FoamConfig } from "../../src/config.js";
 import type { EdgeAttrs, GraphNodeAttrs } from "../../src/graph/builder.js";
+import type { Embedder } from "../../src/semantic/embedder/types.js";
+import { SemanticStore } from "../../src/semantic/store.js";
 import { TOOL_ZOD_SHAPES } from "../../src/tools/index.js";
 import { fixtureRoot } from "../helpers/fixture.js";
 
@@ -67,12 +70,17 @@ const VALID_INPUTS: Record<string, Record<string, unknown>> = {
   orphans: {},
   placeholders: {},
   central_notes: { algorithm: "pagerank" },
+  semantic_search: { query: "example" },
+  build_index: {},
+  index_status: {},
 };
 
 // Connect once for the whole suite — one round-trip for tools/list drives
 // every per-tool assertion.
 let client: Client;
 let listed: ReadonlyMap<string, ListedTool>;
+let storeCleanupDir: string;
+let semanticStore: SemanticStore;
 
 beforeAll(async () => {
   const config: FoamConfig = {
@@ -80,9 +88,28 @@ beforeAll(async () => {
     cacheDir: join(tmpdir(), "foam-notes-mcp-wire-schemas"),
     mocPattern: "*-MOC.md",
     ripgrepPath: "/usr/bin/rg",
+    embedder: "transformers",
   };
   const graph = new DirectedGraph<GraphNodeAttrs, EdgeAttrs>();
-  const ctx = buildToolContext(config, graph);
+
+  // Mock embedder + throwaway sqlite store: the wire-schema test only
+  // exercises `tools/list` (schema introspection), so no embed/search ever
+  // runs. The store still has to be opened to satisfy `ctx.semantic.store`.
+  storeCleanupDir = mkdtempSync(join(tmpdir(), "foam-wire-semantic-"));
+  const embedder: Embedder = {
+    info: { provider: "transformers", model: "mock-4d", dims: 4, name: "mock:4d" },
+    embed: async () => Promise.resolve([]),
+    close: async () => Promise.resolve(),
+  };
+  semanticStore = new SemanticStore({
+    path: join(storeCleanupDir, "index.sqlite"),
+    embedderName: embedder.info.name,
+    dims: embedder.info.dims,
+  });
+  await semanticStore.open();
+  const semantic: SemanticDeps = { embedder, store: semanticStore };
+
+  const ctx = buildToolContext(config, graph, semantic);
   const server = buildServer(ctx);
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -95,11 +122,21 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await client.close();
+  try {
+    await semanticStore.close();
+  } catch {
+    // swallow — may already be closed
+  }
+  try {
+    rmSync(storeCleanupDir, { recursive: true, force: true });
+  } catch {
+    // swallow
+  }
 });
 
 describe("wire schemas (tools/list)", () => {
-  it("server advertises all 12 tools", () => {
-    expect(listed.size).toBe(12);
+  it("server advertises all 15 tools", () => {
+    expect(listed.size).toBe(15);
     for (const name of Object.keys(TOOL_ZOD_SHAPES)) {
       expect(listed.has(name), `server should advertise ${name}`).toBe(true);
     }

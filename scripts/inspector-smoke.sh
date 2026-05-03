@@ -2,7 +2,7 @@
 # MCP Inspector smoke test for foam-notes-mcp.
 #
 # Asserts:
-#   - The server exposes exactly 12 tools (6 keyword + 6 graph).
+#   - The server exposes exactly 15 tools (6 keyword + 6 graph + 3 semantic).
 #   - The server exposes the `foam://graph` resource.
 #
 # Requires `dist/server.js` to be built.
@@ -37,8 +37,8 @@ TOOL_COUNT=$(FORCE_COLOR=0 NO_COLOR=1 printf '%s' "$TOOLS_JSON_CLEAN" | node -e 
 
 echo "[inspector-smoke] tool count: $TOOL_COUNT"
 
-if [[ "$TOOL_COUNT" != "12" ]]; then
-  echo "[inspector-smoke] expected 12 tools, got $TOOL_COUNT" >&2
+if [[ "$TOOL_COUNT" != "15" ]]; then
+  echo "[inspector-smoke] expected 15 tools, got $TOOL_COUNT" >&2
   echo "$TOOLS_JSON_CLEAN" >&2
   exit 1
 fi

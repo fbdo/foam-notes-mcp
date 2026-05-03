@@ -15,13 +15,16 @@ const EXPECTED_TOOL_NAMES = [
   "orphans",
   "placeholders",
   "central_notes",
+  "semantic_search",
+  "build_index",
+  "index_status",
 ] as const;
 
 describe("TOOL_METADATA", () => {
-  it("contains exactly the 12 keyword + graph tools", () => {
+  it("contains exactly the 15 keyword + graph + semantic tools", () => {
     const names = Object.keys(TOOL_METADATA).sort((a, b) => a.localeCompare(b));
     expect(names).toEqual([...EXPECTED_TOOL_NAMES].sort((a, b) => a.localeCompare(b)));
-    expect(names.length).toBe(12);
+    expect(names.length).toBe(15);
   });
 
   it("every tool has a non-empty description", () => {
@@ -52,11 +55,11 @@ describe("TOOL_HANDLERS", () => {
 });
 
 describe("TOOL_ZOD_SHAPES", () => {
-  it("exports a raw shape for every tool handler (12 total)", () => {
+  it("exports a raw shape for every tool handler (15 total)", () => {
     const handlerKeys = Object.keys(TOOL_HANDLERS).sort((a, b) => a.localeCompare(b));
     const shapeKeys = Object.keys(TOOL_ZOD_SHAPES).sort((a, b) => a.localeCompare(b));
     expect(shapeKeys).toEqual(handlerKeys);
-    expect(shapeKeys.length).toBe(12);
+    expect(shapeKeys.length).toBe(15);
   });
 
   it("every entry is a plain object of zod schemas (raw-shape contract)", () => {
@@ -117,8 +120,8 @@ describe("TOOL_ZOD_SHAPES", () => {
     expect(parsed).toEqual({ algorithm: "pagerank", limit: 5, folder: "01-Projects" });
   });
 
-  it("get_vault_stats / orphans / placeholders: accept an empty object", () => {
-    for (const name of ["get_vault_stats", "orphans", "placeholders"] as const) {
+  it("get_vault_stats / orphans / placeholders / index_status: accept an empty object", () => {
+    for (const name of ["get_vault_stats", "orphans", "placeholders", "index_status"] as const) {
       const schema = z.object(TOOL_ZOD_SHAPES[name]);
       expect(schema.parse({})).toEqual({});
     }

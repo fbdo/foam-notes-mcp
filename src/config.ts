@@ -14,6 +14,14 @@ import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 
+/**
+ * Supported embedder providers in v0.1. `ollama`, `openai`, and `bedrock` are
+ * deferred to v0.2 (PLAN Decision #10, amended 2026-05-03). Unknown values
+ * for `FOAM_EMBEDDER` are rejected at config load time (PLAN Decision #26).
+ */
+const SUPPORTED_EMBEDDER_PROVIDERS = ["transformers"] as const;
+export type SupportedEmbedderProvider = (typeof SUPPORTED_EMBEDDER_PROVIDERS)[number];
+
 export interface FoamConfig {
   /** Absolute path to the vault root directory. */
   readonly vaultPath: string;
@@ -26,15 +34,22 @@ export interface FoamConfig {
   readonly mocPattern: string;
   /** Absolute path to the ripgrep binary. */
   readonly ripgrepPath: string;
+  /**
+   * Embedder provider id. Defaults to `"transformers"`. Any other value is a
+   * fatal configuration error in v0.1 — see {@link SUPPORTED_EMBEDDER_PROVIDERS}.
+   */
+  readonly embedder: SupportedEmbedderProvider;
 }
 
 const DEFAULT_CACHE_DIR_REL = "./.foam-mcp/";
 const DEFAULT_MOC_PATTERN = "*-MOC.md";
+const DEFAULT_EMBEDDER: SupportedEmbedderProvider = "transformers";
 
 /**
  * Load and validate configuration from environment variables.
  *
- * @throws Error on Windows, missing/invalid `FOAM_VAULT_PATH`, or missing ripgrep.
+ * @throws Error on Windows, missing/invalid `FOAM_VAULT_PATH`, missing ripgrep,
+ *         or unsupported `FOAM_EMBEDDER` value.
  */
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): FoamConfig => {
   rejectWindows();
@@ -43,8 +58,9 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): FoamConfig => 
   const cacheDir = resolveCacheDir(env.FOAM_CACHE_DIR);
   const mocPattern = resolveMocPattern(env.VAULT_MOC_PATTERN);
   const ripgrepPath = verifyRipgrep();
+  const embedder = resolveEmbedder(env.FOAM_EMBEDDER);
 
-  return { vaultPath, cacheDir, mocPattern, ripgrepPath };
+  return { vaultPath, cacheDir, mocPattern, ripgrepPath, embedder };
 };
 
 const rejectWindows = (): void => {
@@ -82,6 +98,23 @@ const resolveCacheDir = (raw: string | undefined): string => {
 
 const resolveMocPattern = (raw: string | undefined): string =>
   raw && raw.trim() !== "" ? raw : DEFAULT_MOC_PATTERN;
+
+/**
+ * Validate and return the embedder provider id. Unknown values are a fatal
+ * startup error in v0.1 (PLAN Decision #26) — the server refuses to boot
+ * rather than silently falling back to a different provider.
+ */
+const resolveEmbedder = (raw: string | undefined): SupportedEmbedderProvider => {
+  const value = raw && raw.trim() !== "" ? raw.trim() : DEFAULT_EMBEDDER;
+  if (!SUPPORTED_EMBEDDER_PROVIDERS.includes(value as SupportedEmbedderProvider)) {
+    throw new Error(
+      `FOAM_EMBEDDER='${value}' is not supported in v0.1. ` +
+        `Only 'transformers' is available. ` +
+        `ollama/openai/bedrock are deferred to v0.2 per PLAN Decisions #10 (amended 2026-05-03) and #26.`,
+    );
+  }
+  return value as SupportedEmbedderProvider;
+};
 
 const verifyRipgrep = (): string => {
   if (!rgPath) {

@@ -2,16 +2,23 @@
 /**
  * foam-notes-mcp server — minimal MCP server over stdio.
  *
- * Responsibilities (PLAN decisions #20/#22/#23/#25):
+ * Responsibilities (PLAN decisions #20/#22/#23/#25/#26):
  *   - Load config via `loadConfig()`; on failure, log to stderr and exit 1.
  *   - Build the vault graph via `buildGraph()` at startup.
- *   - Build a combined `ToolContext` (keyword + graph sub-contexts) from the
- *     config and graph, and pass it to every handler.
- *   - Register each of the 12 tools via `McpServer.registerTool(name,
+ *   - Construct the semantic embedder + store (lazy: no index build on boot).
+ *   - Build a combined `ToolContext` (keyword + graph + semantic sub-contexts)
+ *     from the config and graph, and pass it to every handler.
+ *   - Register each of the 15 tools via `McpServer.registerTool(name,
  *     { description, inputSchema }, handler)` using zod raw shapes from
  *     `TOOL_ZOD_SHAPES`. The SDK derives `tools/list` output from the
  *     registrations and validates `tools/call` input against the zod shape
  *     before invoking the handler.
+ *   - `build_index` is the single SDK touchpoint for the semantic layer:
+ *     it is registered out of the generic loop so its handler can adapt
+ *     the orchestrator's SDK-agnostic `onProgress` callback into
+ *     `notifications/progress` messages, via the `sendNotification` hook
+ *     on `RequestHandlerExtra` (MCP SDK 1.x, Option C). All other semantic
+ *     tools use the plain generic-loop path.
  *   - Register `foam://graph` via `McpServer.registerResource`; the SDK
  *     auto-handles `resources/list` and `resources/read` dispatch.
  *   - Handler errors: `McpServer` flattens a thrown `Error` into
@@ -28,14 +35,22 @@
  *     dependency-cruiser).
  */
 
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { ProgressNotification } from "@modelcontextprotocol/sdk/types.js";
 
 import { loadConfig, type FoamConfig } from "./config.js";
 import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "./graph/builder.js";
 import { GRAPH_RESOURCE, GRAPH_RESOURCE_URI, readGraphResource } from "./resources/graph.js";
+import { createEmbedder } from "./semantic/embedder/index.js";
+import type { Embedder } from "./semantic/embedder/types.js";
+import { SemanticStore } from "./semantic/store.js";
+import { runBuildIndex, type BuildIndexInput } from "./semantic/tools.js";
+import type { IndexProgress } from "./semantic/index.js";
 import { TOOL_HANDLERS, TOOL_METADATA, TOOL_ZOD_SHAPES, type ToolContext } from "./tools/index.js";
 import type { DirectedGraph } from "graphology";
 
@@ -43,8 +58,19 @@ const SERVER_NAME = "foam-notes-mcp";
 const SERVER_VERSION = "0.0.1";
 
 /**
- * Build a {@link ToolContext} from the loaded runtime config and the
- * prebuilt vault graph.
+ * Semantic-layer dependencies constructed at server startup. Kept in a
+ * dedicated shape so `buildToolContext` has an explicit, narrow parameter
+ * (not a wide `{ ... }` bag) — test code can substitute a mock embedder +
+ * in-tmpdir store without touching the rest of the config surface.
+ */
+export interface SemanticDeps {
+  readonly embedder: Embedder;
+  readonly store: SemanticStore;
+}
+
+/**
+ * Build a {@link ToolContext} from the loaded runtime config, the prebuilt
+ * vault graph, and the pre-opened semantic dependencies.
  *
  * Exposed for testing so that a smoke test can construct a server instance
  * without having to populate every `FoamConfig` field or scan a real vault.
@@ -52,6 +78,7 @@ const SERVER_VERSION = "0.0.1";
 export const buildToolContext = (
   config: FoamConfig,
   graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
+  semantic: SemanticDeps,
 ): ToolContext => ({
   keyword: {
     vaultPath: config.vaultPath,
@@ -62,7 +89,61 @@ export const buildToolContext = (
     vaultPath: config.vaultPath,
     graph,
   },
+  semantic: {
+    vaultPath: config.vaultPath,
+    mocPattern: config.mocPattern,
+    embedder: semantic.embedder,
+    store: semantic.store,
+  },
 });
+
+/**
+ * Shape of the extra argument the SDK passes to a registered tool handler.
+ * We only consume `_meta.progressToken` and `sendNotification`, so we
+ * narrow the import surface by typing it structurally. The full shape is
+ * `RequestHandlerExtra<ServerRequest, ServerNotification>` from
+ * `@modelcontextprotocol/sdk/shared/protocol.js`. `sendNotification`
+ * accepts any member of the `ServerNotification` discriminated union; we
+ * only ever emit {@link ProgressNotification}, so we type the parameter
+ * precisely rather than widening to the full union.
+ */
+interface ToolHandlerExtra {
+  readonly _meta?: { readonly progressToken?: string | number };
+  readonly sendNotification: (notification: ProgressNotification) => Promise<void>;
+}
+
+/**
+ * Build the progress adapter for `build_index`. Returns `undefined` when
+ * the client did not attach a `progressToken`; returns a closure that
+ * emits `notifications/progress` for each orchestrator callback otherwise.
+ *
+ * The returned closure is `void`-returning and swallows any notification
+ * error so a transport hiccup mid-build does not abort the actual index
+ * work.
+ */
+const makeProgressAdapter = (extra: ToolHandlerExtra): ((p: IndexProgress) => void) | undefined => {
+  const token = extra._meta?.progressToken;
+  if (token === undefined) return undefined;
+  return (p: IndexProgress): void => {
+    const message =
+      p.phase === "indexing" && p.currentNote !== undefined
+        ? `${p.phase}: ${p.currentNote}`
+        : p.phase;
+    extra
+      .sendNotification({
+        method: "notifications/progress",
+        params: {
+          progressToken: token,
+          progress: p.processed,
+          total: p.total,
+          message,
+        },
+      })
+      .catch((err: unknown) => {
+        logToStderr("progress notification failed", err);
+      });
+  };
+};
 
 /**
  * Construct a fully-configured `McpServer` with tool and resource
@@ -76,16 +157,16 @@ export const buildServer = (ctx: ToolContext): McpServer => {
     { capabilities: { tools: {}, resources: {} } },
   );
 
-  // Register all 12 tools via a single loop over TOOL_HANDLERS. Each entry
-  // pairs a zod raw shape (from TOOL_ZOD_SHAPES) with a typed handler.
-  // TypeScript cannot verify that the zod-inferred input type for tool N
-  // matches the declared input type of handler N without generic coupling
-  // across the TOOL_HANDLERS map — so we bridge the gap with a single
-  // `as never` cast on the input arg inside the dispatch closure. Each
-  // handler re-validates its input internally (see keyword/tools.ts and
-  // graph/tools.ts), and McpServer validates against the zod shape before
-  // the handler runs, so the cast is safe.
-  const toolNames = Object.keys(TOOL_HANDLERS) as (keyof typeof TOOL_HANDLERS)[];
+  // Register every tool except `build_index` via the generic dispatch loop.
+  // `build_index` is special-cased below because its handler needs access
+  // to the MCP `_meta.progressToken` to emit progress notifications —
+  // that's the sole SDK touchpoint for the semantic layer, and it doesn't
+  // fit the SDK-agnostic `(input, ctx) => result` handler signature used
+  // by the other 14 tools.
+  const SPECIAL_CASED = new Set<string>(["build_index"]);
+  const toolNames = (Object.keys(TOOL_HANDLERS) as (keyof typeof TOOL_HANDLERS)[]).filter(
+    (n) => !SPECIAL_CASED.has(n),
+  );
   for (const name of toolNames) {
     const description = TOOL_METADATA[name].description;
     const inputSchema = TOOL_ZOD_SHAPES[name];
@@ -103,6 +184,36 @@ export const buildServer = (ctx: ToolContext): McpServer => {
       };
     });
   }
+
+  // build_index: special-cased so we can adapt the orchestrator's
+  // SDK-agnostic `onProgress` callback into MCP `notifications/progress`
+  // messages. `RequestHandlerExtra.sendNotification` is the SDK 1.x
+  // entry point (see `dist/esm/shared/protocol.d.ts`). When the client
+  // did not supply a progress token, we skip the adapter and the handler
+  // runs without emitting any progress messages.
+  server.registerTool(
+    "build_index",
+    {
+      description: TOOL_METADATA.build_index.description,
+      inputSchema: TOOL_ZOD_SHAPES.build_index,
+    },
+    async (input: unknown, extra: ToolHandlerExtra) => {
+      const onProgress = makeProgressAdapter(extra);
+      const result = await runBuildIndex(
+        input as BuildIndexInput,
+        ctx.semantic,
+        onProgress ? { onProgress } : undefined,
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    },
+  );
 
   // `foam://graph` is a static URI resource. McpServer auto-dispatches
   // `resources/list` and `resources/read` based on registrations, so we
@@ -140,6 +251,39 @@ const logToStderr = (prefix: string, err: unknown): void => {
   console.error(`[${SERVER_NAME}] ${prefix}: ${message}`);
 };
 
+/**
+ * Construct the semantic dependencies for the server. The store is opened
+ * eagerly (cheap: just a sqlite file open + schema DDL), but the embedder
+ * only touches disk/network on its first `embed()` call — so startup stays
+ * fast and `index_status` can be called without paying any model-load cost.
+ *
+ * The cache subdirectory layout is fixed:
+ *   - `<cacheDir>/semantic/index.sqlite`  — sqlite-vec index
+ *   - `<cacheDir>/semantic/models/`       — HF model cache (Decision #11)
+ */
+const buildSemanticDeps = async (config: FoamConfig): Promise<SemanticDeps> => {
+  const semanticDir = join(config.cacheDir, "semantic");
+  const modelsDir = join(semanticDir, "models");
+  const storePath = join(semanticDir, "index.sqlite");
+
+  // Ensure parent directory exists. sqlite-vec / better-sqlite3 won't create
+  // missing directories; the embedder also expects `cacheDir` to be creatable.
+  mkdirSync(semanticDir, { recursive: true });
+  mkdirSync(modelsDir, { recursive: true });
+  // Also guarantee the sqlite file's parent directory if storePath was set
+  // to some deeper layout in the future (defensive; currently same as above).
+  mkdirSync(dirname(storePath), { recursive: true });
+
+  const embedder = createEmbedder({ provider: config.embedder, cacheDir: modelsDir });
+  const store = new SemanticStore({
+    path: storePath,
+    embedderName: embedder.info.name,
+    dims: embedder.info.dims,
+  });
+  await store.open();
+  return { embedder, store };
+};
+
 const main = async (): Promise<void> => {
   let config: FoamConfig;
   try {
@@ -158,20 +302,46 @@ const main = async (): Promise<void> => {
   }
   console.error(`Graph built: ${String(graph.order)} nodes, ${String(graph.size)} edges`);
 
-  const ctx = buildToolContext(config, graph);
+  let semantic: SemanticDeps;
+  try {
+    semantic = await buildSemanticDeps(config);
+  } catch (err) {
+    logToStderr("failed to initialize semantic store", err);
+    process.exit(1);
+  }
+  console.error(
+    `Semantic store open: ${semantic.embedder.info.name} (dims=${semantic.embedder.info.dims.toString()})`,
+  );
+
+  const ctx = buildToolContext(config, graph, semantic);
   const server = buildServer(ctx);
   const transport = new StdioServerTransport();
 
   const shutdown = (signal: NodeJS.Signals): void => {
     console.error(`[${SERVER_NAME}] received ${signal}, shutting down`);
-    server
-      .close()
-      .catch((err: unknown) => {
-        logToStderr("error during shutdown", err);
-      })
-      .finally(() => {
-        process.exit(0);
-      });
+    // Best-effort: close the MCP server, then the semantic store, then the
+    // embedder. Each step swallows its own failure so a hang in one piece
+    // doesn't block the others (we still exit on a fixed deadline below).
+    const closeAll = async (): Promise<void> => {
+      try {
+        await server.close();
+      } catch (err) {
+        logToStderr("error closing MCP server", err);
+      }
+      try {
+        await semantic.store.close();
+      } catch (err) {
+        logToStderr("error closing semantic store", err);
+      }
+      try {
+        await semantic.embedder.close();
+      } catch (err) {
+        logToStderr("error closing embedder", err);
+      }
+    };
+    closeAll().finally(() => {
+      process.exit(0);
+    });
   };
 
   process.on("SIGINT", shutdown);
