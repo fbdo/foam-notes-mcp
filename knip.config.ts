@@ -13,13 +13,18 @@ import type { KnipConfig } from "knip";
  * are `graphology`, `graphology-shortest-path`, and `graphology-metrics`
  * (via graph/pagerank.ts). They are no longer ignored.
  *
+ * Wave 4A commit 2: semantic-layer deps `better-sqlite3` + `sqlite-vec`
+ * are now imported from `src/semantic/store.ts`, which is reached via
+ * `tests/semantic/store.test.ts` as an entry. The type-only
+ * `@types/better-sqlite3` is resolved through the runtime import as well.
+ *
  * `graphology-components` and `graphology-traversal` remain declared
  * dependencies for anticipated future-wave usage but are not yet imported,
  * so they stay in `ignoreDependencies` to keep knip clean. Remove from
  * this list once they are wired into a source file.
  *
- * Dependencies still scheduled for later waves (semantic layer, watcher)
- * remain in `ignoreDependencies`.
+ * Dependencies still scheduled for later waves (embedder, watcher) remain
+ * in `ignoreDependencies`.
  */
 const config: KnipConfig = {
   entry: ["tests/**/*.test.ts"],
@@ -29,11 +34,8 @@ const config: KnipConfig = {
   ignoreDependencies: [
     // Wired into entry points in later waves.
     "@huggingface/transformers",
-    "better-sqlite3",
     "chokidar",
     "micromatch",
-    "sqlite-vec",
-    "@types/better-sqlite3",
     "@types/micromatch",
   ],
 };
