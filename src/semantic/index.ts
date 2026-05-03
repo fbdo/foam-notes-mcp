@@ -334,6 +334,11 @@ type NoteOutcome = "added" | "updated" | "skipped";
 /**
  * Index a single note: parse, chunk, embed, upsert, record fingerprint.
  *
+ * Shared by both the cold/incremental orchestrator ({@link buildIndex})
+ * and the watcher-driven per-note updater ({@link updateNoteSemantic}) so
+ * behavior (chunking, fingerprint policy, empty-note handling, stale
+ * chunk cleanup) is identical across entry points.
+ *
  * Returns:
  *   - `"added"` / `"updated"` when chunks were written.
  *   - `"skipped"` when the note has no body (zero chunks). The fingerprint
@@ -400,6 +405,84 @@ const indexOneNote = async (
 
   await store.setNoteFingerprint(absPath, fingerprint);
   return existedBefore ? "updated" : "added";
+};
+
+/**
+ * Filesystem change type for watcher-driven incremental updates. Mirrors
+ * the watcher's internal vocabulary (`add|modify|delete`) to keep the
+ * public API symmetric with chokidar's event names; the graph layer uses
+ * its own (`added|modified|deleted`) triple and the watcher translates
+ * at the dispatch boundary.
+ */
+export type SemanticChangeType = "add" | "modify" | "delete";
+
+/** Outcome of a single {@link updateNoteSemantic} invocation. */
+export type SemanticUpdateOutcome = "added" | "updated" | "removed" | "skipped";
+
+/** Options accepted by {@link updateNoteSemantic}. */
+export interface UpdateNoteSemanticOptions {
+  /** Chunks per embed batch. Default `32`. */
+  readonly batchSize?: number;
+  /** Optional vault index threaded through to the chunker for wikilink substitution. */
+  readonly vaultIndex?: VaultIndex;
+}
+
+/**
+ * Apply a single file-change event to the semantic store.
+ *
+ * This is the watcher-facing per-note updater. `buildIndex` remains the
+ * batch orchestrator; both share the same per-note indexing implementation
+ * so behavior (chunking, fingerprint policy, empty-note handling, stale
+ * chunk cleanup) is identical.
+ *
+ * Semantics:
+ *   - `"add"` / `"modify"`: reads the file, computes a content-only SHA-256
+ *     fingerprint, and re-embeds iff the fingerprint differs from the
+ *     store. Empty-bodied notes are recorded as `"skipped"` (fingerprint
+ *     still written to avoid re-reading on the next event).
+ *   - `"delete"`: removes all chunks for the note and clears the stored
+ *     fingerprint. Returns `"removed"` when rows were dropped, `"skipped"`
+ *     when nothing was indexed for that path.
+ *
+ * Errors propagate to the caller — the watcher wraps each dispatch in a
+ * try/catch and surfaces failures via its `onError` callback.
+ */
+export const updateNoteSemantic = async (
+  notePath: string,
+  change: SemanticChangeType,
+  vaultPath: string,
+  store: SemanticStore,
+  embedder: Embedder,
+  opts?: UpdateNoteSemanticOptions,
+): Promise<SemanticUpdateOutcome> => {
+  const batchSize =
+    opts?.batchSize !== undefined && opts.batchSize > 0 ? opts.batchSize : DEFAULT_BATCH_SIZE;
+
+  if (change === "delete") {
+    const removed = await store.deleteByNotePath(notePath);
+    // Clear any residual fingerprint so a future add is classified correctly.
+    await store.setNoteFingerprint(notePath, "");
+    return removed > 0 ? "removed" : "skipped";
+  }
+
+  const content = await readFile(notePath, "utf8");
+  const fingerprint = contentFingerprint(content);
+  const existing = await store.getNoteFingerprint(notePath);
+  if (existing !== null && existing !== "" && existing === fingerprint) {
+    // Fingerprint unchanged — no-op. This matters when the watcher emits
+    // spurious change events (editor touch, no content diff).
+    return "skipped";
+  }
+
+  return indexOneNote(
+    notePath,
+    fingerprint,
+    vaultPath,
+    embedder,
+    store,
+    batchSize,
+    opts?.vaultIndex,
+  );
 };
 
 const toStoredChunk = (chunk: Chunk, folder: string, tags: readonly string[]): StoredChunk => ({
