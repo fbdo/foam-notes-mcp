@@ -74,7 +74,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@vscode/ripgrep": "^1.15.11",
     "better-sqlite3": "^12.9.0",
-    "chokidar": "^4.0.0",
+    "chokidar": "^5.0.0",
     "fast-glob": "^3.3.2",
     "graphology": "^0.26.0",
     "graphology-metrics": "^2.4.0",
