@@ -24,3 +24,32 @@ export class ToolValidationError extends Error {
     Object.setPrototypeOf(this, ToolValidationError.prototype);
   }
 }
+
+/**
+ * Thrown by `readGraphResource` when the `foam://graph` resource would
+ * exceed the configured size caps (`FOAM_GRAPH_MAX_NODES` /
+ * `FOAM_GRAPH_MAX_BYTES`). The server layer (`src/server.ts`) maps this
+ * to `McpError(InvalidRequest, ...)` so MCP clients see a fail-fast
+ * error rather than a silent multi-megabyte stdio payload.
+ *
+ * `kind` distinguishes which cap was hit; `actual`/`limit` are kept on
+ * the instance so future telemetry wiring can report the overshoot
+ * without re-parsing the human-readable message.
+ *
+ * Uses `Object.setPrototypeOf` in the constructor so `instanceof` checks
+ * survive TypeScript's `extends Error` down-leveling, matching
+ * `ToolValidationError` above.
+ */
+export class GraphResourceTooLargeError extends Error {
+  public readonly code = "GRAPH_RESOURCE_TOO_LARGE" as const;
+  constructor(
+    message: string,
+    public readonly kind: "nodes" | "bytes",
+    public readonly actual: number,
+    public readonly limit: number,
+  ) {
+    super(message);
+    this.name = "GraphResourceTooLargeError";
+    Object.setPrototypeOf(this, GraphResourceTooLargeError.prototype);
+  }
+}

@@ -42,9 +42,11 @@ import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ProgressNotification } from "@modelcontextprotocol/sdk/types.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import fg from "fast-glob";
 
 import { loadConfig, type FoamConfig } from "./config.js";
+import { GraphResourceTooLargeError } from "./errors.js";
 import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "./graph/builder.js";
 import { GRAPH_RESOURCE, GRAPH_RESOURCE_URI, readGraphResource } from "./resources/graph.js";
 import { buildVaultIndex } from "./resolver.js";
@@ -164,12 +166,33 @@ const makeProgressAdapter = (extra: ToolHandlerExtra): ((p: IndexProgress) => vo
 };
 
 /**
+ * Graph-resource size caps threaded into `buildServer`. Both fields are
+ * optional so test callers can continue to invoke `buildServer(ctx)`
+ * without plumbing env-backed config; when omitted, the same defaults as
+ * `loadConfig()` are applied so boot behavior is identical.
+ *
+ * Production boot in `main()` passes the values loaded from
+ * `FOAM_GRAPH_MAX_NODES` / `FOAM_GRAPH_MAX_BYTES`.
+ */
+export interface BuildServerOptions {
+  readonly graphResourceMaxNodes?: number;
+  readonly graphResourceMaxBytes?: number;
+}
+
+/** Must match `DEFAULT_GRAPH_MAX_NODES` in `src/config.ts`. */
+const BUILD_SERVER_DEFAULT_MAX_NODES = 5000;
+/** Must match `DEFAULT_GRAPH_MAX_BYTES` in `src/config.ts`. */
+const BUILD_SERVER_DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
  * Construct a fully-configured `McpServer` with tool and resource
  * registrations. Does NOT connect to a transport — that is the caller's
  * responsibility (and it is deliberate so that tests can inspect the
  * server without any real I/O).
  */
-export const buildServer = (ctx: ToolContext): McpServer => {
+export const buildServer = (ctx: ToolContext, options: BuildServerOptions = {}): McpServer => {
+  const maxNodes = options.graphResourceMaxNodes ?? BUILD_SERVER_DEFAULT_MAX_NODES;
+  const maxBytes = options.graphResourceMaxBytes ?? BUILD_SERVER_DEFAULT_MAX_BYTES;
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {}, resources: {} } },
@@ -248,16 +271,30 @@ export const buildServer = (ctx: ToolContext): McpServer => {
       mimeType: GRAPH_RESOURCE.mimeType,
     },
     async () => {
-      const contents = await readGraphResource({ graph: ctx.graph.graph });
-      return {
-        contents: [
-          {
-            uri: contents.uri,
-            mimeType: contents.mimeType,
-            text: contents.text,
-          },
-        ],
-      };
+      try {
+        const contents = await readGraphResource(
+          { graph: ctx.graph.graph },
+          { maxNodes, maxBytes },
+        );
+        return {
+          contents: [
+            {
+              uri: contents.uri,
+              mimeType: contents.mimeType,
+              text: contents.text,
+            },
+          ],
+        };
+      } catch (err) {
+        // `GraphResourceTooLargeError` is caller-correctable (raise the
+        // env cap or switch to a targeted graph tool), so we map it to
+        // `InvalidRequest` rather than letting it bubble up as an
+        // internal error. Other errors propagate unchanged.
+        if (err instanceof GraphResourceTooLargeError) {
+          throw new McpError(ErrorCode.InvalidRequest, err.message);
+        }
+        throw err;
+      }
     },
   );
 
@@ -388,7 +425,10 @@ const main = async (): Promise<void> => {
   );
 
   const ctx = buildToolContext(config, graph, semantic);
-  const server = buildServer(ctx);
+  const server = buildServer(ctx, {
+    graphResourceMaxNodes: config.graphResourceMaxNodes,
+    graphResourceMaxBytes: config.graphResourceMaxBytes,
+  });
   const transport = new StdioServerTransport();
 
   // File watcher: opt-out via FOAM_WATCHER=0 (PLAN Decision #12).

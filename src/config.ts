@@ -45,11 +45,28 @@ export interface FoamConfig {
    * Decision #12.
    */
   readonly watcher: boolean;
+  /**
+   * Max node count for the `foam://graph` resource payload. When
+   * `graph.order` exceeds this, the resource read throws and the server
+   * surfaces `McpError(InvalidRequest, ...)` rather than shipping a
+   * multi-megabyte JSON blob over stdio. Default: 5000 (the v0.1 perf
+   * ceiling). Override via `FOAM_GRAPH_MAX_NODES`.
+   */
+  readonly graphResourceMaxNodes: number;
+  /**
+   * Max UTF-8 byte length of the serialized `foam://graph` JSON payload.
+   * Checked *after* serialization (since the byte count is only known
+   * once `JSON.stringify` runs). Default: 10 MiB. Override via
+   * `FOAM_GRAPH_MAX_BYTES`.
+   */
+  readonly graphResourceMaxBytes: number;
 }
 
 const DEFAULT_CACHE_DIR_REL = "./.foam-mcp/";
 const DEFAULT_MOC_PATTERN = "*-MOC.md";
 const DEFAULT_EMBEDDER: SupportedEmbedderProvider = "transformers";
+const DEFAULT_GRAPH_MAX_NODES = 5000;
+const DEFAULT_GRAPH_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB
 
 /**
  * Load and validate configuration from environment variables.
@@ -66,8 +83,27 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): FoamConfig => 
   const ripgrepPath = verifyRipgrep();
   const embedder = resolveEmbedder(env.FOAM_EMBEDDER);
   const watcher = parseBool(env.FOAM_WATCHER, "FOAM_WATCHER", true);
+  const graphResourceMaxNodes = parsePositiveInt(
+    env.FOAM_GRAPH_MAX_NODES,
+    "FOAM_GRAPH_MAX_NODES",
+    DEFAULT_GRAPH_MAX_NODES,
+  );
+  const graphResourceMaxBytes = parsePositiveInt(
+    env.FOAM_GRAPH_MAX_BYTES,
+    "FOAM_GRAPH_MAX_BYTES",
+    DEFAULT_GRAPH_MAX_BYTES,
+  );
 
-  return { vaultPath, cacheDir, mocPattern, ripgrepPath, embedder, watcher };
+  return {
+    vaultPath,
+    cacheDir,
+    mocPattern,
+    ripgrepPath,
+    embedder,
+    watcher,
+    graphResourceMaxNodes,
+    graphResourceMaxBytes,
+  };
 };
 
 const rejectWindows = (): void => {
@@ -160,4 +196,38 @@ const parseBool = (raw: string | undefined, envName: string, defaultValue: boole
   throw new Error(
     `${envName}='${raw}' is not a valid boolean. Accepted values: 1/true/yes or 0/false/no.`,
   );
+};
+
+/**
+ * Parse a positive-integer env var.
+ *
+ * - Unset, empty, or whitespace-only → `defaultValue`.
+ * - Accepts decimal digits only (no leading `+`/`-`, no float, no hex,
+ *   no exponent). Rejects `0` — every call site requires a strictly
+ *   positive limit, so a zero value is almost certainly a config typo
+ *   rather than intentional "disable the cap".
+ * - Anything else throws with a clear accepted-values message. We
+ *   prefer this over silent coercion to catch typos at startup.
+ */
+const parsePositiveInt = (
+  raw: string | undefined,
+  envName: string,
+  defaultValue: number,
+): number => {
+  if (raw === undefined) return defaultValue;
+  const trimmed = raw.trim();
+  if (trimmed === "") return defaultValue;
+  // Digits-only guard: rules out `1e9`, `0x10`, `3.14`, `-5`, `+5`, whitespace.
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(
+      `${envName}='${raw}' is not a valid positive integer. Accepted values: a decimal integer >= 1.`,
+    );
+  }
+  const value = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(
+      `${envName}='${raw}' is not a valid positive integer. Accepted values: a decimal integer >= 1.`,
+    );
+  }
+  return value;
 };

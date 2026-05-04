@@ -32,6 +32,8 @@ describe("server (smoke)", () => {
     ripgrepPath: "/usr/bin/rg",
     embedder: "transformers",
     watcher: false,
+    graphResourceMaxNodes: 5000,
+    graphResourceMaxBytes: 10 * 1024 * 1024,
   };
 
   const makeGraph = (): DirectedGraph<GraphNodeAttrs, EdgeAttrs> =>
@@ -177,6 +179,8 @@ describe("server (smoke)", () => {
       ripgrepPath: "/usr/bin/rg",
       embedder: "transformers",
       watcher: false,
+      graphResourceMaxNodes: 5000,
+      graphResourceMaxBytes: 10 * 1024 * 1024,
     };
     try {
       const deps = await buildSemanticDeps(config);

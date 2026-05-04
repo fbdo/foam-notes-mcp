@@ -21,6 +21,7 @@
 
 import type { DirectedGraph } from "graphology";
 
+import { GraphResourceTooLargeError } from "../errors.js";
 import type { EdgeAttrs, GraphNodeAttrs } from "../graph/builder.js";
 
 /** Canonical URI for the graph resource. */
@@ -81,22 +82,76 @@ interface GraphResourcePayload {
 }
 
 /**
+ * Size caps applied before serialization is returned to MCP clients.
+ *
+ * - `maxNodes`: rejects graphs with `graph.order` strictly greater than
+ *   this value. Checked *before* serialization so that a pathological
+ *   5000-note vault doesn't pay the `graph.export()` + `JSON.stringify`
+ *   cost just to find out the result is over the limit.
+ * - `maxBytes`: rejects serialized payloads whose UTF-8 byte length is
+ *   strictly greater than this value. Checked *after* serialization
+ *   since the exact byte count is only knowable once the string exists.
+ *
+ * Both caps are configured via `FOAM_GRAPH_MAX_NODES` /
+ * `FOAM_GRAPH_MAX_BYTES` env vars in `src/config.ts`; the server layer
+ * threads them through on every `resources/read` call. The boundary is
+ * strictly greater than: `actual == limit` is allowed, `actual > limit`
+ * throws. This matches the natural reading of "max = N" as "up to and
+ * including N".
+ */
+export interface ReadGraphResourceOptions {
+  readonly maxNodes: number;
+  readonly maxBytes: number;
+}
+
+/**
  * Read the `foam://graph` resource. Returns a compact JSON string (no
  * pretty-printing) suitable for machine consumption.
+ *
+ * Throws {@link GraphResourceTooLargeError} if either size cap in
+ * `options` is exceeded. The server layer translates the error into
+ * `McpError(InvalidRequest, ...)`; the human-readable `message` names
+ * the specific env var and points clients to the six graph tools
+ * (`list_backlinks`, `neighbors`, `shortest_path`, `central_notes`,
+ * `orphans`, `placeholders`) as targeted alternatives.
  */
 export const readGraphResource = async (
   ctx: GraphResourceContext,
+  options: ReadGraphResourceOptions,
 ): Promise<GraphResourceContents> => {
+  const nodeCount = ctx.graph.order;
+  if (nodeCount > options.maxNodes) {
+    throw new GraphResourceTooLargeError(
+      `Graph has ${String(nodeCount)} nodes, exceeds FOAM_GRAPH_MAX_NODES=${String(options.maxNodes)}. ` +
+        `Use the graph tools (list_backlinks, neighbors, shortest_path, central_notes, orphans, placeholders) for targeted queries.`,
+      "nodes",
+      nodeCount,
+      options.maxNodes,
+    );
+  }
+
   const payload: GraphResourcePayload = {
     version: 1,
-    nodeCount: ctx.graph.order,
+    nodeCount,
     edgeCount: ctx.graph.size,
     graph: ctx.graph.export(),
   };
+  const text = JSON.stringify(payload);
+  const byteLength = Buffer.byteLength(text, "utf8");
+  if (byteLength > options.maxBytes) {
+    throw new GraphResourceTooLargeError(
+      `Graph serialized to ${String(byteLength)} bytes, exceeds FOAM_GRAPH_MAX_BYTES=${String(options.maxBytes)}. ` +
+        `Increase the limit or use graph tools for targeted queries.`,
+      "bytes",
+      byteLength,
+      options.maxBytes,
+    );
+  }
+
   return {
     uri: GRAPH_RESOURCE_URI,
     mimeType: "application/json",
-    text: JSON.stringify(payload),
+    text,
   };
 };
 

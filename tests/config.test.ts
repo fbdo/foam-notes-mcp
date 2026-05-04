@@ -157,4 +157,60 @@ describe("loadConfig", () => {
       /FOAM_WATCHER='maybe' is not a valid boolean/,
     );
   });
+
+  it("defaults FOAM_GRAPH_MAX_NODES to 5000 when unset", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir });
+    expect(cfg.graphResourceMaxNodes).toBe(5000);
+  });
+
+  it("parses FOAM_GRAPH_MAX_NODES='200' as 200", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir, FOAM_GRAPH_MAX_NODES: "200" });
+    expect(cfg.graphResourceMaxNodes).toBe(200);
+  });
+
+  it("rejects FOAM_GRAPH_MAX_NODES='0' (positive integer required)", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_GRAPH_MAX_NODES: "0" })).toThrow(
+      /FOAM_GRAPH_MAX_NODES='0' is not a valid positive integer/,
+    );
+  });
+
+  it("rejects non-numeric FOAM_GRAPH_MAX_NODES", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_GRAPH_MAX_NODES: "abc" })).toThrow(
+      /FOAM_GRAPH_MAX_NODES='abc' is not a valid positive integer/,
+    );
+  });
+
+  it("defaults FOAM_GRAPH_MAX_BYTES to 10 MiB (10485760) when unset", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir });
+    expect(cfg.graphResourceMaxBytes).toBe(10 * 1024 * 1024);
+    expect(cfg.graphResourceMaxBytes).toBe(10485760);
+  });
+
+  it("parses FOAM_GRAPH_MAX_BYTES and rejects invalid values", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+
+    const cfg = loadConfig({ FOAM_VAULT_PATH: dir, FOAM_GRAPH_MAX_BYTES: "2048" });
+    expect(cfg.graphResourceMaxBytes).toBe(2048);
+
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_GRAPH_MAX_BYTES: "0" })).toThrow(
+      /FOAM_GRAPH_MAX_BYTES='0' is not a valid positive integer/,
+    );
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_GRAPH_MAX_BYTES: "-5" })).toThrow(
+      /FOAM_GRAPH_MAX_BYTES='-5' is not a valid positive integer/,
+    );
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_GRAPH_MAX_BYTES: "1.5" })).toThrow(
+      /FOAM_GRAPH_MAX_BYTES='1.5' is not a valid positive integer/,
+    );
+  });
 });

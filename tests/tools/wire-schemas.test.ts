@@ -91,6 +91,8 @@ beforeAll(async () => {
     ripgrepPath: "/usr/bin/rg",
     embedder: "transformers",
     watcher: false,
+    graphResourceMaxNodes: 5000,
+    graphResourceMaxBytes: 10 * 1024 * 1024,
   };
   const graph = new DirectedGraph<GraphNodeAttrs, EdgeAttrs>();
 
