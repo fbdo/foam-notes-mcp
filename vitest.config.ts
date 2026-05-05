@@ -2,6 +2,12 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // Perf tests are expensive (generate a 500-note synthetic vault, load a
+    // real embedder in the semantic suite) and assert wall-clock budgets that
+    // are sensitive to the host machine. They live under `tests/perf/**` and
+    // are run via a separate config (`vitest.perf.config.ts` / `npm run
+    // test:perf`) so that `npm test` stays fast and deterministic.
+    exclude: ["**/node_modules/**", "**/dist/**", "tests/perf/**"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
