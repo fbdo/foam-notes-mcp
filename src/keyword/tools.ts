@@ -19,7 +19,7 @@ import { parseFrontmatter } from "../parse/frontmatter.js";
 import { extractTags } from "../parse/tags.js";
 import { extractTasks, type Task } from "../parse/tasks.js";
 import { extractWikilinks, type Wikilink } from "../parse/wikilink.js";
-import { globToRegex, isInsideVault, safeParseFrontmatter } from "../path-util.js";
+import { globToRegex, isInsideVaultAsync, safeParseFrontmatter } from "../path-util.js";
 import {
   buildVaultIndex,
   resolveDirectoryLink,
@@ -208,7 +208,7 @@ export const findUncheckedTasks = async (
   const out: TaskResult[] = [];
   for (const file of files) {
     if (!file.endsWith(".md")) continue;
-    if (!isInsideVault(file, ctx.vaultPath)) continue;
+    if (!(await isInsideVaultAsync(file, ctx.vaultPath))) continue;
     const src = await readFile(file, "utf8");
     collectUncheckedTasks(file, src, headingFilter, out);
   }
@@ -279,7 +279,7 @@ export const getNote = async (
     ? resolvePath(input.path)
     : resolvePath(ctx.vaultPath, input.path);
 
-  if (!isInsideVault(absolute, ctx.vaultPath)) {
+  if (!(await isInsideVaultAsync(absolute, ctx.vaultPath))) {
     throw new ToolValidationError(`get_note: path escapes the vault: ${input.path}`);
   }
   if (!absolute.endsWith(".md")) {

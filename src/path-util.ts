@@ -9,6 +9,7 @@
  * while giving us one place to test and maintain.
  */
 
+import { realpath } from "node:fs/promises";
 import { dirname, relative, resolve as resolvePath, sep as pathSep } from "node:path";
 
 import { parseFrontmatter } from "./parse/frontmatter.js";
@@ -18,6 +19,19 @@ import { parseFrontmatter } from "./parse/frontmatter.js";
  * inside it. Works with relative paths (they are resolved first) and uses
  * the platform-appropriate separator to avoid the `/vault` vs `/vault2`
  * prefix-collision class of bug.
+ *
+ * TRADEOFF (see also {@link isInsideVaultAsync}): this variant performs a
+ * textual `resolve()` + `startsWith(vault + sep)` check. It is synchronous
+ * and fast, but is vulnerable to a symlink-escape class of bug: a symlink
+ * inside the vault that points to an outside directory (e.g.
+ * `<vault>/escape -> /etc`) passes the textual check yet, when followed,
+ * lands outside the vault on disk.
+ *
+ * Safe to use for paths that were DISCOVERED by us (fast-glob output,
+ * chokidar events scoped by the watcher's `ignored:` predicate) — those
+ * have already been traversal-filtered to be inside the vault on disk.
+ * For USER-CONTROLLED input (MCP tool params), prefer
+ * {@link isInsideVaultAsync}, which canonicalizes via `fs.realpath`.
  */
 export const isInsideVault = (candidate: string, vaultPath: string): boolean => {
   const c = resolvePath(candidate);
@@ -25,6 +39,51 @@ export const isInsideVault = (candidate: string, vaultPath: string): boolean => 
   if (c === v) return true;
   return c.startsWith(v + pathSep);
 };
+
+/**
+ * Realpath-aware variant of {@link isInsideVault}: resolves both sides via
+ * `fs.realpath` before the prefix comparison, so a symlink that LOOKS like
+ * it lives inside the vault but resolves outside is correctly rejected.
+ *
+ * Fallback on ENOENT: when the candidate path does not yet exist on disk
+ * (the canonical case is a chokidar `'add'` event fired before the file's
+ * parent has been fully flushed, or a caller probing a path it intends to
+ * create), we fall back to the textual behavior of the sync variant —
+ * comparing `path.resolve(candidate)` against `path.resolve(vaultPath)`.
+ * A path that does not exist cannot be a symlink, so this fallback is
+ * safe; we match BOTH sides textually so the comparison is well-defined
+ * on systems where the tmpdir or home lives behind a system symlink
+ * (e.g. macOS `/var -> /private/var`).
+ *
+ * The VAULT path is realpath'd on the happy path: a legitimate setup
+ * where the user points `FOAM_VAULT_PATH` at a symlink
+ * (e.g. `~/notes -> ~/Dropbox/notes`) must still have all interior
+ * paths recognized as "inside the vault". Canonicalization here absorbs
+ * that level of indirection cleanly.
+ *
+ * Use this at every tool boundary that accepts user-controlled paths.
+ */
+export async function isInsideVaultAsync(candidate: string, vaultPath: string): Promise<boolean> {
+  const vaultResolved = await realpath(resolvePath(vaultPath));
+  let candidateResolved: string;
+  try {
+    candidateResolved = await realpath(resolvePath(candidate));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      // Path doesn't exist on disk yet — fall back to textual comparison
+      // on BOTH sides so the prefix check is well-defined even when the
+      // vault lives behind a system-level symlink. A non-existent path
+      // can't be a symlink, so this fallback is safe.
+      const vaultTextual = resolvePath(vaultPath);
+      const candidateTextual = resolvePath(candidate);
+      if (candidateTextual === vaultTextual) return true;
+      return candidateTextual.startsWith(vaultTextual + pathSep);
+    }
+    throw err;
+  }
+  if (candidateResolved === vaultResolved) return true;
+  return candidateResolved.startsWith(vaultResolved + pathSep);
+}
 
 /**
  * Tiny glob→regex converter. Handles `*` (zero-or-more), `?` (exactly one),

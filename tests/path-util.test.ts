@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { resolve as resolvePath, sep as pathSep } from "node:path";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import { resolve as resolvePath, sep as pathSep, join as joinPath } from "node:path";
 
 import {
   deriveTitle,
   globToRegex,
   isInsideVault,
+  isInsideVaultAsync,
   relativeFolder,
   safeParseFrontmatter,
 } from "../src/path-util.js";
@@ -178,5 +181,200 @@ describe("safeParseFrontmatter", () => {
     // Either data is `{}` (catch branch) or data was parsed loosely; in both
     // cases the function must return without throwing.
     expect(typeof result.data).toBe("object");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isInsideVaultAsync — realpath-aware variant
+//
+// Cases that must be rejected by the async variant but slip past the sync
+// one (and vice-versa: legitimate symlink setups like a symlinked vault
+// root must still be accepted) live here. Tests that only exercise textual
+// resolve() behavior belong to the `isInsideVault` block above.
+// ---------------------------------------------------------------------------
+
+/**
+ * Probe whether the current environment supports creating symlinks.
+ * On CI Linux/macOS, symlinks work. On Windows, `fs.symlinkSync` typically
+ * requires admin / developer-mode. We skip the whole async describe block
+ * when unsupported rather than faking the fs, so the tests actually exercise
+ * realpath resolution on real inodes.
+ */
+function supportsSymlinks(): boolean {
+  if (process.platform === "win32") return false;
+  try {
+    const tmp = fs.mkdtempSync(joinPath(os.tmpdir(), "symlink-probe-"));
+    try {
+      fs.symlinkSync("/tmp", joinPath(tmp, "link"));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe.skipIf(!supportsSymlinks())("isInsideVaultAsync", () => {
+  // Realpath-canonicalize helper. macOS puts tmpdirs under `/var` which is
+  // itself a symlink to `/private/var`, so every expected value we build
+  // needs to live in the same realpath'd world the implementation sees.
+  const realp = (p: string): string => fs.realpathSync(p);
+
+  // Per-test sandbox. We create a fresh directory for each test to keep
+  // them hermetic — symlinks across tests would otherwise cross-talk.
+  const makeSandbox = (): { vault: string; outside: string; cleanup: () => void } => {
+    const root = fs.mkdtempSync(joinPath(os.tmpdir(), "foam-vault-"));
+    const vault = joinPath(root, "vault");
+    const outside = joinPath(root, "outside");
+    fs.mkdirSync(vault, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    const cleanup = (): void => fs.rmSync(root, { recursive: true, force: true });
+    return { vault, outside, cleanup };
+  };
+
+  it("accepts a real file nested inside the vault (no symlinks)", async () => {
+    const { vault, cleanup } = makeSandbox();
+    try {
+      const file = joinPath(vault, "notes", "a.md");
+      fs.mkdirSync(joinPath(vault, "notes"));
+      fs.writeFileSync(file, "# a\n");
+      expect(await isInsideVaultAsync(file, vault)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("returns true when candidate equals the vault root", async () => {
+    const { vault, cleanup } = makeSandbox();
+    try {
+      expect(await isInsideVaultAsync(vault, vault)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("falls back to textual resolve when the candidate does not yet exist (ENOENT, inside)", async () => {
+    // Simulates a chokidar `'add'` event on a path that has not been
+    // flushed to disk yet. Because non-existent paths can't be symlinks,
+    // the textual-fallback is safe AND must still accept interior paths.
+    const { vault, cleanup } = makeSandbox();
+    try {
+      const futurePath = joinPath(vault, "new-note.md");
+      expect(fs.existsSync(futurePath)).toBe(false);
+      expect(await isInsideVaultAsync(futurePath, vault)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("falls back to textual resolve (ENOENT, outside) and rejects", async () => {
+    const { vault, outside, cleanup } = makeSandbox();
+    try {
+      const futurePath = joinPath(outside, "leak.md");
+      expect(fs.existsSync(futurePath)).toBe(false);
+      expect(await isInsideVaultAsync(futurePath, vault)).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects a path that escapes via a symlink inside the vault (the M5 case)", async () => {
+    // `vault/escape -> outside`. A child path of the symlink (`vault/escape/file`)
+    // resolves to `outside/file`, which is OUTSIDE the vault on disk. The
+    // sync variant is fooled by this; the async variant must reject it.
+    const { vault, outside, cleanup } = makeSandbox();
+    try {
+      const targetFile = joinPath(outside, "secret.md");
+      fs.writeFileSync(targetFile, "# secret\n");
+      const linkDir = joinPath(vault, "escape");
+      fs.symlinkSync(outside, linkDir, "dir");
+
+      // Sanity: the sync textual check passes (the bug we're fixing).
+      expect(isInsideVault(joinPath(linkDir, "secret.md"), vault)).toBe(true);
+      // The async check rejects the escape.
+      expect(await isInsideVaultAsync(joinPath(linkDir, "secret.md"), vault)).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("accepts a symlink inside the vault that points to another vault-internal location", async () => {
+    // `vault/alias -> vault/real` is legitimate (the user has reorganized
+    // without breaking old links). Its children must still be accepted.
+    const { vault, cleanup } = makeSandbox();
+    try {
+      const real = joinPath(vault, "real");
+      fs.mkdirSync(real);
+      fs.writeFileSync(joinPath(real, "note.md"), "# note\n");
+      const alias = joinPath(vault, "alias");
+      fs.symlinkSync(real, alias, "dir");
+      expect(await isInsideVaultAsync(joinPath(alias, "note.md"), vault)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("accepts interior paths when the VAULT root itself is a symlink", async () => {
+    // Legitimate setup: `~/notes -> ~/Dropbox/notes`. We pass the symlink
+    // as `vaultPath`; interior paths (resolved to the real target) must
+    // still be recognized as inside the vault.
+    const { vault, cleanup } = makeSandbox();
+    try {
+      const realVault = joinPath(vault, "real-vault");
+      fs.mkdirSync(realVault);
+      fs.writeFileSync(joinPath(realVault, "x.md"), "# x\n");
+      const linkedVault = joinPath(vault, "linked-vault");
+      fs.symlinkSync(realVault, linkedVault, "dir");
+
+      expect(await isInsideVaultAsync(joinPath(linkedVault, "x.md"), linkedVault)).toBe(true);
+      // Also accepts the real path against the symlinked-vault arg:
+      expect(await isInsideVaultAsync(joinPath(realVault, "x.md"), linkedVault)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("accepts `..` traversal that normalizes back to an inside path", async () => {
+    const { vault, cleanup } = makeSandbox();
+    try {
+      const a = joinPath(vault, "a");
+      const b = joinPath(vault, "b");
+      fs.mkdirSync(a);
+      fs.mkdirSync(b);
+      fs.writeFileSync(joinPath(b, "c.md"), "# c\n");
+      const traversal = joinPath(a, "..", "b", "c.md");
+      expect(await isInsideVaultAsync(traversal, vault)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects `..` traversal that normalizes to an outside path", async () => {
+    const { vault, outside, cleanup } = makeSandbox();
+    try {
+      fs.writeFileSync(joinPath(outside, "leak.md"), "# leak\n");
+      // `<vault>/../outside/leak.md` resolves to `<sandbox>/outside/leak.md`.
+      const traversal = joinPath(vault, "..", "outside", "leak.md");
+      expect(await isInsideVaultAsync(traversal, vault)).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects a sibling directory whose textual prefix matches the vault", async () => {
+    // Guardrail against naive `startsWith` without the separator boundary,
+    // now exercised against a real-on-disk pair where both sides exist.
+    const { vault, cleanup } = makeSandbox();
+    try {
+      const sibling = vault + "-backup";
+      fs.mkdirSync(sibling);
+      fs.writeFileSync(joinPath(sibling, "note.md"), "# n\n");
+      expect(await isInsideVaultAsync(joinPath(sibling, "note.md"), vault)).toBe(false);
+      // Confirm both realpaths exist and are siblings (no symlink trickery).
+      expect(realp(sibling).startsWith(realp(vault) + pathSep)).toBe(false);
+    } finally {
+      cleanup();
+    }
   });
 });

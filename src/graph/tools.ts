@@ -26,7 +26,7 @@ import type { DirectedGraph } from "graphology";
 import { bidirectional } from "graphology-shortest-path/unweighted.js";
 
 import { ToolValidationError } from "../errors.js";
-import { isInsideVault } from "../path-util.js";
+import { isInsideVaultAsync } from "../path-util.js";
 import type { EdgeAttrs, GraphNodeAttrs, NoteNodeAttrs } from "./builder.js";
 import { computePageRank } from "./pagerank.js";
 
@@ -132,7 +132,7 @@ export const listBacklinks = async (
   input: ListBacklinksInput,
   ctx: GraphToolContext,
 ): Promise<ListBacklinksOutput> => {
-  const notePath = requireNotePath(input.note, ctx, "list_backlinks");
+  const notePath = await requireNotePath(input.note, ctx, "list_backlinks");
 
   interface RawBacklink {
     readonly sourcePath: string;
@@ -185,7 +185,7 @@ export const neighbors = async (
   input: NeighborsInput,
   ctx: GraphToolContext,
 ): Promise<NeighborsOutput> => {
-  const notePath = requireNotePath(input.note, ctx, "neighbors");
+  const notePath = await requireNotePath(input.note, ctx, "neighbors");
   const depth = validateDepth(input.depth);
   const direction = validateDirection(input.direction);
 
@@ -222,8 +222,8 @@ export const shortestPath = async (
   input: ShortestPathInput,
   ctx: GraphToolContext,
 ): Promise<ShortestPathOutput> => {
-  const fromPath = requireNotePath(input.from, ctx, "shortest_path", "from");
-  const toPath = requireNotePath(input.to, ctx, "shortest_path", "to");
+  const fromPath = await requireNotePath(input.from, ctx, "shortest_path", "from");
+  const toPath = await requireNotePath(input.to, ctx, "shortest_path", "to");
   const maxHops = validateMaxHops(input.max_hops);
 
   if (fromPath === toPath) {
@@ -353,18 +353,22 @@ const validateFolder = (raw: string | undefined): string | undefined => {
 /**
  * Normalize a caller-supplied note path to its absolute form, reject paths
  * outside the vault, and assert the node exists in the graph.
+ *
+ * Async because the vault-scope check uses {@link isInsideVaultAsync},
+ * which realpath's both sides to reject symlink-escape attempts on paths
+ * that exist on disk (a symlink inside the vault pointing outside).
  */
-const requireNotePath = (
+const requireNotePath = async (
   raw: unknown,
   ctx: GraphToolContext,
   tool: string,
   field = "note",
-): string => {
+): Promise<string> => {
   if (typeof raw !== "string" || raw === "") {
     throw new ToolValidationError(`${tool}: '${field}' must be a non-empty string`);
   }
   const absolute = isAbsolute(raw) ? resolvePath(raw) : resolvePath(ctx.vaultPath, raw);
-  if (!isInsideVault(absolute, ctx.vaultPath)) {
+  if (!(await isInsideVaultAsync(absolute, ctx.vaultPath))) {
     throw new ToolValidationError(`${tool}: path escapes the vault: ${raw}`);
   }
   if (!ctx.graph.hasNode(absolute)) {
