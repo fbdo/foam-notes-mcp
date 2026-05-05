@@ -18,7 +18,7 @@ import fg from "fast-glob";
 import { DirectedGraph } from "graphology";
 
 import { extractTags } from "../parse/tags.js";
-import { extractWikilinks } from "../parse/wikilink.js";
+import { extractWikilinks, type Wikilink } from "../parse/wikilink.js";
 import { deriveTitle, globToRegex, relativeFolder, safeParseFrontmatter } from "../path-util.js";
 import {
   buildVaultIndex,
@@ -35,6 +35,21 @@ import {
  */
 const DEFAULT_MOC_PATTERN = "*-MOC.md";
 
+/**
+ * Record of a single ambiguous wikilink occurrence on a note. Surfaces the
+ * raw link target, every candidate the resolver returned, and the link's
+ * source position plus optional alias/heading. Emitted as part of
+ * {@link NoteNodeAttrs.ambiguousLinks}; see that field for semantics.
+ */
+export interface AmbiguousLinkEntry {
+  readonly target: string;
+  readonly candidates: readonly string[];
+  readonly line: number;
+  readonly column: number;
+  readonly alias?: string;
+  readonly heading?: string;
+}
+
 /** Node attributes for a real note (resolved file on disk). */
 export interface NoteNodeAttrs {
   readonly type: "note";
@@ -44,6 +59,17 @@ export interface NoteNodeAttrs {
   readonly tags: readonly string[];
   readonly frontmatter: Record<string, unknown>;
   readonly isMoc: boolean;
+  /**
+   * Ambiguous wikilinks originating from this note, if any. An ambiguous
+   * link resolves to ≥ 2 candidates; we intentionally drop the edge (no
+   * placeholder, no arbitrary target) and record the ambiguity here so
+   * downstream tools can surface it without conflating ambiguity with
+   * broken-link semantics.
+   *
+   * Semantics: omitted (undefined) when the note has no ambiguous links.
+   * Empty arrays are never set — keeps `foam://graph` exports tight.
+   */
+  readonly ambiguousLinks?: readonly AmbiguousLinkEntry[];
 }
 
 /** Node attributes for an unresolved wikilink target. */
@@ -99,11 +125,21 @@ export const buildGraph = async (
     });
   }
 
-  // Pass 2: resolve wikilinks and add edges + placeholders.
+  // Pass 2: resolve wikilinks, add edges + placeholders, and collect
+  // ambiguous-link entries per note. We apply collected ambiguities to each
+  // note node at the end so we can skip the field entirely when empty
+  // (keeps the exported graph compact).
+  const ambiguousByNote = new Map<string, AmbiguousLinkEntry[]>();
   for (const note of parsed) {
     for (const link of note.wikilinks) {
-      addEdgeForLink(graph, note.path, link, vaultPath, vaultIndex);
+      addEdgeForLink(graph, note.path, link, vaultPath, vaultIndex, ambiguousByNote);
     }
+  }
+  for (const [notePath, entries] of ambiguousByNote) {
+    if (entries.length === 0) continue;
+    const prior = graph.getNodeAttributes(notePath);
+    if (prior.type !== "note") continue;
+    graph.replaceNodeAttributes(notePath, { ...prior, ambiguousLinks: entries });
   }
 
   return graph;
@@ -116,7 +152,7 @@ interface ParsedNote {
   readonly title: string;
   readonly tags: readonly string[];
   readonly frontmatter: Record<string, unknown>;
-  readonly wikilinks: readonly import("../parse/wikilink.js").Wikilink[];
+  readonly wikilinks: readonly Wikilink[];
 }
 
 const readAndParseNote = async (absPath: string, vaultPath: string): Promise<ParsedNote> => {
@@ -141,55 +177,102 @@ const readAndParseNote = async (absPath: string, vaultPath: string): Promise<Par
 const addEdgeForLink = (
   graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
   sourcePath: string,
-  link: import("../parse/wikilink.js").Wikilink,
+  link: Wikilink,
   vaultPath: string,
   vaultIndex: VaultIndex,
+  ambiguousByNote: Map<string, AmbiguousLinkEntry[]>,
 ): void => {
-  const target = resolveLinkTarget(link.target, vaultPath, vaultIndex);
-  const edgeAttrs: EdgeAttrs = {
-    line: link.line,
-    column: link.column,
-    ...(link.alias !== undefined ? { alias: link.alias } : {}),
-    ...(link.heading !== undefined ? { heading: link.heading } : {}),
-  };
-  if (target === undefined) {
-    const pid = placeholderId(link.target);
+  const resolution = resolveLinkTarget(link.target, vaultPath, vaultIndex);
+  if (resolution.kind === "ambiguous") {
+    // Ambiguous → no edge, no placeholder; record on the source note's
+    // attributes instead (conflating ambiguity with broken-link semantics
+    // is exactly what this decision avoids).
+    recordAmbiguous(ambiguousByNote, sourcePath, link, resolution.candidates);
+    return;
+  }
+  const edgeAttrs = edgeAttrsFromLink(link);
+  if (resolution.kind === "unresolved") {
+    const pid = placeholderId(resolution.target);
     if (!graph.hasNode(pid)) {
-      graph.addNode(pid, { type: "placeholder", target: link.target });
+      graph.addNode(pid, { type: "placeholder", target: resolution.target });
     }
     if (!graph.hasEdge(sourcePath, pid)) {
       graph.addDirectedEdge(sourcePath, pid, edgeAttrs);
     }
     return;
   }
-  // For simple `DirectedGraph`, duplicate edges to the same target collapse
-  // into one. The fixture has no such duplicates; for real vaults this is an
-  // acceptable approximation (PLAN: "one per resolved wikilink" + explicit
-  // `DirectedGraph` choice in the Wave 3 brief).
-  if (!graph.hasEdge(sourcePath, target)) {
-    graph.addDirectedEdge(sourcePath, target, edgeAttrs);
+  // resolved. For simple `DirectedGraph`, duplicate edges to the same target
+  // collapse into one. The fixture has no such duplicates; for real vaults
+  // this is an acceptable approximation (PLAN: "one per resolved wikilink"
+  // + explicit `DirectedGraph` choice in the Wave 3 brief).
+  if (!graph.hasEdge(sourcePath, resolution.target)) {
+    graph.addDirectedEdge(sourcePath, resolution.target, edgeAttrs);
   }
 };
 
+/** Build an `EdgeAttrs` object from a raw wikilink. Omits optional fields. */
+const edgeAttrsFromLink = (link: Wikilink): EdgeAttrs => ({
+  line: link.line,
+  column: link.column,
+  ...(link.alias !== undefined ? { alias: link.alias } : {}),
+  ...(link.heading !== undefined ? { heading: link.heading } : {}),
+});
+
+/** Push an `AmbiguousLinkEntry` onto the per-note list, lazily creating it. */
+const recordAmbiguous = (
+  ambiguousByNote: Map<string, AmbiguousLinkEntry[]>,
+  sourcePath: string,
+  link: Wikilink,
+  candidates: readonly string[],
+): void => {
+  const entry: AmbiguousLinkEntry = {
+    target: link.target,
+    candidates,
+    line: link.line,
+    column: link.column,
+    ...(link.alias !== undefined ? { alias: link.alias } : {}),
+    ...(link.heading !== undefined ? { heading: link.heading } : {}),
+  };
+  const list = ambiguousByNote.get(sourcePath);
+  if (list) list.push(entry);
+  else ambiguousByNote.set(sourcePath, [entry]);
+};
+
 /**
- * Resolve a wikilink target using the Foam ladder plus the directory-link
- * fallback (`[[folder]]` → `folder/index.md`). Returns the absolute path of
- * the resolved note, or `undefined` when the target is unresolvable
- * (placeholder).
+ * Three-way resolution of a wikilink target. Callers pattern-match on `kind`:
+ *   - `resolved`   → target is an absolute path; add an edge to it.
+ *   - `ambiguous`  → target has ≥ 2 candidates; do NOT add an edge or
+ *                    placeholder; the builder records the ambiguity on the
+ *                    source note via {@link NoteNodeAttrs.ambiguousLinks}.
+ *   - `unresolved` → no candidates; create a placeholder and add an edge.
+ *
+ * The ambiguity branch intentionally bypasses the directory-link fallback:
+ * when the resolver is already confident in multiple matches, the
+ * folder/index.md heuristic has no bearing on the author's intent.
  */
-const resolveLinkTarget = (
+export type LinkResolution =
+  | { readonly kind: "resolved"; readonly target: string }
+  | { readonly kind: "ambiguous"; readonly candidates: readonly string[] }
+  | { readonly kind: "unresolved"; readonly target: string };
+
+export const resolveLinkTarget = (
   target: string,
   vaultPath: string,
   vaultIndex: VaultIndex,
-): string | undefined => {
+): LinkResolution => {
   const resolved = resolveWikilink(target, vaultIndex);
-  if (resolved.candidates.length === 1 && resolved.confidence !== "ambiguous") {
-    return resolved.candidates[0];
+  if (resolved.confidence === "ambiguous") {
+    return { kind: "ambiguous", candidates: [...resolved.candidates] };
   }
-  // Ambiguous → pick none (tools layer can expose the ambiguity separately).
-  if (resolved.confidence === "ambiguous") return undefined;
-  // Directory-link fallback.
-  return resolveDirectoryLink(target, vaultPath, vaultIndex);
+  if (resolved.candidates.length === 1) {
+    const only = resolved.candidates[0];
+    if (only !== undefined) return { kind: "resolved", target: only };
+  }
+  // Directory-link fallback is only reached for non-ambiguous, zero-
+  // candidate results (i.e. the main ladder returned nothing).
+  const dir = resolveDirectoryLink(target, vaultPath, vaultIndex);
+  if (dir !== undefined) return { kind: "resolved", target: dir };
+  return { kind: "unresolved", target };
 };
 
 const listMarkdownFiles = async (vaultPath: string): Promise<string[]> => {

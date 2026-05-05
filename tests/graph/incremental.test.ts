@@ -1,5 +1,13 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { cpSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import fg from "fast-glob";
@@ -217,5 +225,110 @@ describe("graph/incremental updateNote", () => {
     const after = graph.getNodeAttributes(mocPath);
     expect(after.type).toBe("note");
     if (after.type === "note") expect(after.isMoc).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ambiguous wikilinks (M2): the incremental path must rebuild
+// NoteNodeAttrs.ambiguousLinks from scratch on every modify — old entries
+// must be cleared when the underlying wikilink is gone, and new ones must
+// appear when one is introduced. Uses a synthetic temp vault that creates a
+// basename collision (`a/foo.md` + `b/foo.md`) so a bare `[[foo]]` link on
+// `c/links.md` is ambiguous.
+// ---------------------------------------------------------------------------
+
+describe("graph/incremental updateNote — ambiguous wikilinks (M2)", () => {
+  const cleanup: (() => void)[] = [];
+
+  afterEach(() => {
+    while (cleanup.length > 0) {
+      const fn = cleanup.pop();
+      if (fn) fn();
+    }
+  });
+
+  const makeAmbiguousVault = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "foam-graph-incr-ambig-"));
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "a"));
+    mkdirSync(join(dir, "b"));
+    mkdirSync(join(dir, "c"));
+    writeFileSync(join(dir, "a", "foo.md"), "---\ntitle: Foo A\n---\n# Foo A\n", "utf8");
+    writeFileSync(join(dir, "b", "foo.md"), "---\ntitle: Foo B\n---\n# Foo B\n", "utf8");
+    writeFileSync(join(dir, "c", "other.md"), "---\ntitle: Other\n---\n# Other\n", "utf8");
+    writeFileSync(
+      join(dir, "c", "links.md"),
+      "---\ntitle: Links\n---\n# Links\n\n- [[foo]]\n- [[other]]\n",
+      "utf8",
+    );
+    return dir;
+  };
+
+  it("modify that removes an ambiguous wikilink clears ambiguousLinks", async () => {
+    const vault = makeAmbiguousVault();
+    const graph = await buildGraph(vault);
+    const linksPath = resolvePath(vault, "c/links.md");
+
+    // Sanity: the bare `[[foo]]` link is ambiguous in the built graph.
+    const before = graph.getNodeAttributes(linksPath);
+    expect(before.type).toBe("note");
+    if (before.type === "note") {
+      expect(before.ambiguousLinks).toBeDefined();
+      expect(before.ambiguousLinks).toHaveLength(1);
+    }
+
+    // Rewrite `c/links.md` without the ambiguous `[[foo]]` line — keep the
+    // non-ambiguous `[[other]]` link so reconcileOutgoingEdges still has
+    // work to do.
+    writeFileSync(linksPath, "---\ntitle: Links\n---\n# Links\n\n- [[other]]\n", "utf8");
+    const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
+
+    await updateNote(graph, vault, linksPath, "modified", vaultIndex, "*-MOC.md");
+
+    const after = graph.getNodeAttributes(linksPath);
+    expect(after.type).toBe("note");
+    if (after.type === "note") {
+      // Empty arrays are never set — the field must be omitted entirely.
+      expect(after.ambiguousLinks).toBeUndefined();
+    }
+  });
+
+  it("modify that introduces an ambiguous wikilink populates ambiguousLinks", async () => {
+    const vault = makeAmbiguousVault();
+    // Start with a version of links.md that has NO ambiguous link.
+    const linksPath = resolvePath(vault, "c/links.md");
+    writeFileSync(linksPath, "---\ntitle: Links\n---\n# Links\n\n- [[other]]\n", "utf8");
+
+    const graph = await buildGraph(vault);
+    // Sanity: no ambiguous links recorded yet.
+    const before = graph.getNodeAttributes(linksPath);
+    expect(before.type).toBe("note");
+    if (before.type === "note") expect(before.ambiguousLinks).toBeUndefined();
+
+    // Now modify the file to add the ambiguous `[[foo]]` link. The two
+    // colliding `foo.md` files are already in the vault.
+    writeFileSync(linksPath, "---\ntitle: Links\n---\n# Links\n\n- [[foo]]\n- [[other]]\n", "utf8");
+    const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
+
+    await updateNote(graph, vault, linksPath, "modified", vaultIndex, "*-MOC.md");
+
+    const fooAPath = resolvePath(vault, "a/foo.md");
+    const fooBPath = resolvePath(vault, "b/foo.md");
+
+    const after = graph.getNodeAttributes(linksPath);
+    expect(after.type).toBe("note");
+    if (after.type !== "note") return;
+    expect(after.ambiguousLinks).toBeDefined();
+    expect(after.ambiguousLinks).toHaveLength(1);
+    const entry = after.ambiguousLinks?.[0];
+    expect(entry?.target).toBe("foo");
+    expect([...(entry?.candidates ?? [])].sort((a, b) => a.localeCompare(b))).toEqual(
+      [fooAPath, fooBPath].sort((a, b) => a.localeCompare(b)),
+    );
+
+    // And no edge + no placeholder for the ambiguous link.
+    expect(graph.hasEdge(linksPath, fooAPath)).toBe(false);
+    expect(graph.hasEdge(linksPath, fooBPath)).toBe(false);
+    expect(graph.hasNode(placeholderId("foo"))).toBe(false);
   });
 });

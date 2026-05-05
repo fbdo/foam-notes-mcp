@@ -24,9 +24,11 @@ import type { DirectedGraph } from "graphology";
 import { extractTags } from "../parse/tags.js";
 import { extractWikilinks, type Wikilink } from "../parse/wikilink.js";
 import { deriveTitle, globToRegex, relativeFolder, safeParseFrontmatter } from "../path-util.js";
-import { resolveDirectoryLink, resolveWikilink, type VaultIndex } from "../resolver.js";
+import { type VaultIndex } from "../resolver.js";
 import {
   placeholderId,
+  resolveLinkTarget,
+  type AmbiguousLinkEntry,
   type EdgeAttrs,
   type GraphNodeAttrs,
   type NoteNodeAttrs,
@@ -146,6 +148,12 @@ const handleAddOrModify = async (
   const prior = existingIsMoc(graph, path);
   const isMoc = prior ?? globToRegex(mocPattern).test(base + ".md");
 
+  // Rebuild ambiguousLinks from scratch from the new wikilink set. On
+  // modify this naturally clears stale entries (any link that previously
+  // produced an ambiguity but is now missing or resolved simply doesn't
+  // reappear here). Omit the field when empty so we don't bloat exports.
+  const ambiguousLinks = collectAmbiguousLinks(wikilinks, vaultPath, vaultIndex);
+
   const attrs: NoteNodeAttrs = {
     type: "note",
     title: deriveTitle(frontmatter, base),
@@ -154,6 +162,7 @@ const handleAddOrModify = async (
     tags,
     frontmatter,
     isMoc,
+    ...(ambiguousLinks.length > 0 ? { ambiguousLinks } : {}),
   };
 
   if (!graph.hasNode(path)) {
@@ -164,6 +173,33 @@ const handleAddOrModify = async (
   }
 
   reconcileOutgoingEdges(graph, path, wikilinks, vaultPath, vaultIndex, diff);
+};
+
+/**
+ * Walk a note's wikilinks and return the entries whose resolution is
+ * ambiguous (≥ 2 candidates). Mirrors the collection logic in
+ * `builder.ts`'s pass 2, kept here to keep `updateNote` self-contained and
+ * to avoid exporting more than necessary from the builder.
+ */
+const collectAmbiguousLinks = (
+  wikilinks: readonly Wikilink[],
+  vaultPath: string,
+  vaultIndex: VaultIndex,
+): AmbiguousLinkEntry[] => {
+  const out: AmbiguousLinkEntry[] = [];
+  for (const link of wikilinks) {
+    const resolution = resolveLinkTarget(link.target, vaultPath, vaultIndex);
+    if (resolution.kind !== "ambiguous") continue;
+    out.push({
+      target: link.target,
+      candidates: resolution.candidates,
+      line: link.line,
+      column: link.column,
+      ...(link.alias !== undefined ? { alias: link.alias } : {}),
+      ...(link.heading !== undefined ? { heading: link.heading } : {}),
+    });
+  }
+  return out;
 };
 
 const existingIsMoc = (
@@ -191,7 +227,8 @@ const reconcileOutgoingEdges = (
 /**
  * Build the desired `(targetId → EdgeAttrs)` map from a file's wikilinks.
  * On duplicate link to the same target, the first occurrence wins (matches
- * `builder.ts`'s `hasEdge` short-circuit).
+ * `builder.ts`'s `hasEdge` short-circuit). Ambiguous links contribute
+ * nothing here — they have no edge (see `NoteNodeAttrs.ambiguousLinks`).
  */
 const computeDesiredEdges = (
   wikilinks: readonly Wikilink[],
@@ -200,7 +237,10 @@ const computeDesiredEdges = (
 ): Map<string, EdgeAttrs> => {
   const desired = new Map<string, EdgeAttrs>();
   for (const link of wikilinks) {
-    const targetId = resolveLinkTarget(link.target, vaultPath, vaultIndex);
+    const resolution = resolveLinkTarget(link.target, vaultPath, vaultIndex);
+    if (resolution.kind === "ambiguous") continue;
+    const targetId =
+      resolution.kind === "resolved" ? resolution.target : placeholderId(resolution.target);
     if (desired.has(targetId)) continue;
     const attrs: EdgeAttrs = {
       line: link.line,
@@ -300,9 +340,14 @@ const promotePlaceholders = (
   for (const placeholderNodeId of placeholders) {
     const attrs = graph.getNodeAttributes(placeholderNodeId);
     if (attrs.type !== "placeholder") continue;
-    const resolved = resolveLinkTarget(attrs.target, vaultPath, vaultIndex);
-    // Unresolvable or still a placeholder target → leave alone.
-    if (resolved.startsWith(PLACEHOLDER_PREFIX)) continue;
+    const resolution = resolveLinkTarget(attrs.target, vaultPath, vaultIndex);
+    // Still unresolved or now ambiguous → leave the placeholder as-is.
+    // (Ambiguity is a property of the linking note, not the target node;
+    // the linking note re-processes its own `ambiguousLinks` when it's
+    // next modified. Dropping the placeholder here would also drop
+    // real inbound edges from notes that haven't been re-processed.)
+    if (resolution.kind !== "resolved") continue;
+    const resolved = resolution.target;
     // The real target must already be a node in the graph (the caller must
     // have applied the addition before this pass). If not, skip.
     if (!graph.hasNode(resolved)) continue;
@@ -324,19 +369,6 @@ const promotePlaceholders = (
 };
 
 // ---------------------------------------------------------------------------
-// Shared helpers (small glue specific to this file — broader duplicates live
-// in `src/path-util.ts` and `src/resolver.ts`).
+// (The local `resolveLinkTarget` helper was removed: builder.ts now exports
+// the canonical discriminated-union resolver and both modules share it.)
 // ---------------------------------------------------------------------------
-
-const resolveLinkTarget = (target: string, vaultPath: string, vaultIndex: VaultIndex): string => {
-  const resolved = resolveWikilink(target, vaultIndex);
-  if (resolved.candidates.length === 1 && resolved.confidence !== "ambiguous") {
-    const only = resolved.candidates[0];
-    if (only !== undefined) return only;
-  }
-  if (resolved.confidence !== "ambiguous") {
-    const dir = resolveDirectoryLink(target, vaultPath, vaultIndex);
-    if (dir !== undefined) return dir;
-  }
-  return placeholderId(target);
-};
