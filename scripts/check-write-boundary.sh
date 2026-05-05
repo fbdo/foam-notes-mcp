@@ -17,8 +17,11 @@ ALLOWED=(
 
 # Methods that write, rename, or delete on the filesystem. Covers both
 # sync (`fs.writeFileSync`) and promise (`fs.promises.writeFile` /
-# `fsp.writeFile`) usage. `rm\(` keeps `rmSync` and `rm(...)` distinct
-# from property access like `foo.rm` (unlikely, but belt-and-braces).
+# `fsp.writeFile`) usage, AND bare named-import calls (e.g. an
+# `import { mkdirSync } from "node:fs"` followed by `mkdirSync(...)`).
+# The previous revision of this script was prefix-anchored to
+# `(fs|fsp|promises)\.` and missed the bare-import form — which in turn
+# let `mkdirSync` leak into `src/server.ts` before this Wave 6 fix.
 PATTERNS=(
   "writeFile"
   "writeFileSync"
@@ -30,16 +33,30 @@ PATTERNS=(
   "renameSync"
   "unlink"
   "unlinkSync"
-  "rm\\("
+  "rm"
   "rmSync"
 )
 
 PATTERN=$(IFS='|'; echo "${PATTERNS[*]}")
 
+# Match a word-boundary'd method name followed by optional whitespace and
+# an open paren. This catches both `fs.writeFile(` / `fsp.writeFile(` and
+# the bare `writeFile(` form produced by a named import. `\b` on BSD grep
+# (-E) treats non-word characters — including `.` — as boundaries, so the
+# dotted-access case still matches. Using `\b` rather than explicit
+# character classes keeps the regex compact; it has been verified to
+# reject intra-identifier substrings (e.g. `mkdirSyncResult(`) on both
+# BSD and GNU grep.
+GREP_PATTERN="\\b(${PATTERN})\\s*\\("
+
 # grep -REn prefixes each match with `path:line:`. We filter out matches
-# on the allowlisted paths by anchoring on that prefix.
-FOUND=$(grep -REn --include='*.ts' "(fs|fsp|promises)\.(${PATTERN})" src/ \
+# on the allowlisted paths by anchoring on that prefix. We also drop
+# comment lines (JSDoc `*` continuations and `//` line comments) so that
+# documentation mentioning one of these method names doesn't trip the
+# boundary check.
+FOUND=$(grep -REn --include='*.ts' "${GREP_PATTERN}" src/ \
   | grep -vE "^(${ALLOWED[0]}|${ALLOWED[1]}):" \
+  | grep -vE ":[[:space:]]*(\\*|//)" \
   || true)
 
 if [[ -n "$FOUND" ]]; then

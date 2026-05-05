@@ -35,8 +35,7 @@
  *     dependency-cruiser).
  */
 
-import { mkdirSync } from "node:fs";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -45,6 +44,7 @@ import type { ProgressNotification } from "@modelcontextprotocol/sdk/types.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import fg from "fast-glob";
 
+import { ensureNestedCacheDir } from "./cache.js";
 import { loadConfig, type FoamConfig } from "./config.js";
 import { GraphResourceTooLargeError } from "./errors.js";
 import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "./graph/builder.js";
@@ -319,17 +319,15 @@ const logToStderr = (prefix: string, err: unknown): void => {
  * Exported for testing; `main()` is the production caller.
  */
 export const buildSemanticDeps = async (config: FoamConfig): Promise<SemanticDeps> => {
-  const semanticDir = join(config.cacheDir, "semantic");
-  const modelsDir = join(semanticDir, "models");
+  // Delegate directory creation to cache.ts (the sole sanctioned writer
+  // under PLAN Decision #23). `ensureNestedCacheDir` is `mkdir -p`, so
+  // creating `semantic/models/` also materializes `semantic/` — and the
+  // sqlite file's parent directory is `semantic/`, so no third call is
+  // needed. sqlite-vec / better-sqlite3 won't create missing directories
+  // itself; the embedder likewise expects its cache root to be creatable.
+  const semanticDir = ensureNestedCacheDir(config.cacheDir, "semantic");
+  const modelsDir = ensureNestedCacheDir(config.cacheDir, "semantic", "models");
   const storePath = join(semanticDir, "index.sqlite");
-
-  // Ensure parent directory exists. sqlite-vec / better-sqlite3 won't create
-  // missing directories; the embedder also expects `cacheDir` to be creatable.
-  mkdirSync(semanticDir, { recursive: true });
-  mkdirSync(modelsDir, { recursive: true });
-  // Also guarantee the sqlite file's parent directory if storePath was set
-  // to some deeper layout in the future (defensive; currently same as above).
-  mkdirSync(dirname(storePath), { recursive: true });
 
   const embedder = createEmbedder({ provider: config.embedder, cacheDir: modelsDir });
   const store = new SemanticStore({

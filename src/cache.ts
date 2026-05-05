@@ -62,6 +62,25 @@ export const ensureCacheLayout = (cacheDir: string): Record<CacheSubdir, string>
 };
 
 /**
+ * Ensure a nested directory exists under `cacheDir`, creating every
+ * intermediate segment as needed (`mkdir -p`). Returns the absolute path
+ * of the resulting directory. Idempotent — safe to call on an existing
+ * layout.
+ *
+ * This is the canonical entry point for feature layers that need deeper
+ * cache subdirectories than the four top-level `CACHE_SUBDIRS` (e.g. the
+ * semantic layer's `<cacheDir>/semantic/models/`). Keeping the call site
+ * inside `cache.ts` preserves the "cache.ts is the only writer" invariant
+ * (PLAN Decision #23) without forcing callers to grow feature-specific
+ * helpers in this leaf module.
+ */
+export const ensureNestedCacheDir = (cacheDir: string, ...segments: string[]): string => {
+  const full = join(cacheDir, ...segments);
+  mkdirSync(full, { recursive: true });
+  return full;
+};
+
+/**
  * Compute a stable fingerprint from a file's content + metadata.
  *
  * Content-hashed so renames/moves don't invalidate caches, mtime-included so
