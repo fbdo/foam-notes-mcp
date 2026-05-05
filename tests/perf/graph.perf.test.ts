@@ -86,3 +86,70 @@ describe("graph p95 budgets on 500-note vault", () => {
     expect(p95).toBeLessThan(100);
   });
 });
+
+/**
+ * 5k-note opt-in scaling tier. Enabled only when `FOAM_PERF_5K=1` (or
+ * `=true`) — not run by default `npm run test:perf` or in CI. All
+ * assertions are informational (log p95 / mean / min / max, assert only
+ * that samples were recorded) — PLAN has not set 5k budgets yet.
+ */
+const perf5kEnabled = process.env.FOAM_PERF_5K === "1" || process.env.FOAM_PERF_5K === "true";
+
+let vaultPath5k: string;
+let ctx5k: GraphToolContext;
+
+describe.skipIf(!perf5kEnabled)("graph p95 budgets on 5000-note vault (informational)", () => {
+  beforeAll(async () => {
+    vaultPath5k = getOrCreateSyntheticVault(5000);
+    const graph = await buildGraph(vaultPath5k);
+    ctx5k = { vaultPath: vaultPath5k, graph };
+  });
+
+  it("buildGraph cold build 5k (informational)", async () => {
+    const { p95, mean, samples } = await measureP95(() => buildGraph(vaultPath5k), 5);
+    const min = samples[0] ?? 0;
+    const max = samples[samples.length - 1] ?? 0;
+    console.error(
+      `buildGraph 5k (informational): p95=${p95.toFixed(1)}ms mean=${mean.toFixed(1)}ms min=${min.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+    );
+    expect(samples.length).toBe(5);
+  });
+
+  it("list_backlinks (informational)", async () => {
+    const samplePath = pickNotePath(ctx5k);
+    const { p95, mean, samples } = await measureP95(() =>
+      listBacklinks({ note: samplePath }, ctx5k),
+    );
+    const min = samples[0] ?? 0;
+    const max = samples[samples.length - 1] ?? 0;
+    console.error(
+      `list_backlinks 5k: p95=${p95.toFixed(1)}ms mean=${mean.toFixed(1)}ms min=${min.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+    );
+    expect(p95).toBeGreaterThan(0);
+  });
+
+  it("neighbors depth=2 (informational)", async () => {
+    const samplePath = pickNotePath(ctx5k);
+    const { p95, mean, samples } = await measureP95(() =>
+      neighbors({ note: samplePath, depth: 2 }, ctx5k),
+    );
+    const min = samples[0] ?? 0;
+    const max = samples[samples.length - 1] ?? 0;
+    console.error(
+      `neighbors depth=2 5k: p95=${p95.toFixed(1)}ms mean=${mean.toFixed(1)}ms min=${min.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+    );
+    expect(p95).toBeGreaterThan(0);
+  });
+
+  it("central_notes pagerank (informational)", async () => {
+    const { p95, mean, samples } = await measureP95(() =>
+      centralNotes({ algorithm: "pagerank", limit: 10 }, ctx5k),
+    );
+    const min = samples[0] ?? 0;
+    const max = samples[samples.length - 1] ?? 0;
+    console.error(
+      `central_notes pagerank 5k: p95=${p95.toFixed(1)}ms mean=${mean.toFixed(1)}ms min=${min.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+    );
+    expect(p95).toBeGreaterThan(0);
+  });
+});

@@ -112,3 +112,73 @@ describe.skipIf(!canRun)("semantic p95 budgets on 500-note vault (real embedder)
     expect(p95).toBeLessThan(300);
   }, 60_000);
 });
+
+/**
+ * 5k-note opt-in scaling tier. Enabled only when BOTH:
+ *   - `FOAM_PERF_5K=1` (or `=true`) — opt-in flag.
+ *   - `canRun` is true — network + `FOAM_SKIP_MODEL_DOWNLOAD` gate (same
+ *     as the 500-note suite above).
+ *
+ * Assertions are informational (log p95 / mean / min / max; assert p95>0
+ * for per-call tools). Semantic cold build has a soft 600s cap just to
+ * catch pathological regressions — PLAN has not set 5k budgets yet.
+ */
+const perf5kEnabled = process.env.FOAM_PERF_5K === "1" || process.env.FOAM_PERF_5K === "true";
+
+describe.skipIf(!canRun || !perf5kEnabled)(
+  "semantic p95 budgets on 5000-note vault (informational)",
+  () => {
+    let vaultPath5k: string;
+    let storePath5k: string;
+    let embedder5k: TransformersEmbedder | undefined;
+    let store5k: SemanticStore | undefined;
+
+    beforeAll(async () => {
+      vaultPath5k = getOrCreateSyntheticVault(5000);
+      storePath5k = path.join(vaultPath5k, ".foam-mcp", "semantic", "index.sqlite");
+      fs.mkdirSync(path.dirname(storePath5k), { recursive: true });
+      if (fs.existsSync(storePath5k)) fs.rmSync(storePath5k);
+
+      embedder5k = new TransformersEmbedder({});
+      store5k = new SemanticStore({
+        path: storePath5k,
+        embedderName: embedder5k.info.name,
+        dims: embedder5k.info.dims,
+      });
+      await store5k.open();
+    }, 600_000);
+
+    afterAll(async () => {
+      if (store5k) await store5k.close();
+      if (embedder5k) await embedder5k.close();
+    });
+
+    it("cold build 5k (soft cap 600s, informational p95)", async () => {
+      if (!embedder5k || !store5k) throw new Error("beforeAll did not initialize embedder/store");
+      const start = performance.now();
+      await buildIndex(vaultPath5k, embedder5k, store5k, { force: true });
+      const dur = performance.now() - start;
+      console.error(`cold build 5k: ${dur.toFixed(0)}ms (soft cap 600000ms)`);
+      expect(dur).toBeLessThan(600_000);
+    }, 900_000);
+
+    it("semantic_search 5k (informational)", async () => {
+      if (!embedder5k || !store5k) throw new Error("beforeAll did not initialize embedder/store");
+      const ctx = {
+        vaultPath: vaultPath5k,
+        mocPattern: "*-MOC.md",
+        embedder: embedder5k,
+        store: store5k,
+      };
+      const { p95, mean, samples } = await measureP95(() =>
+        semanticSearch({ query: "topic about projects", limit: 10 }, ctx),
+      );
+      const min = samples[0] ?? 0;
+      const max = samples[samples.length - 1] ?? 0;
+      console.error(
+        `semantic_search 5k: p95=${p95.toFixed(1)}ms mean=${mean.toFixed(1)}ms min=${min.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+      );
+      expect(p95).toBeGreaterThan(0);
+    }, 120_000);
+  },
+);

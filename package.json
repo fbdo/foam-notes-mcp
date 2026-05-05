@@ -47,6 +47,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:perf": "vitest run --config vitest.perf.config.ts",
+    "test:perf:5k": "FOAM_PERF_5K=1 vitest run --config vitest.perf.config.ts",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
     "format": "prettier --write \"**/*.{ts,json,md}\"",

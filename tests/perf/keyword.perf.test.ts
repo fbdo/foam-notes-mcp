@@ -52,3 +52,54 @@ describe("keyword p95 budgets on 500-note vault", () => {
     expect(p95).toBeLessThan(300);
   });
 });
+
+/**
+ * 5k-note opt-in scaling tier. Enabled only when `FOAM_PERF_5K=1` (or
+ * `=true`) — not run by default `npm run test:perf` or in CI. Purpose:
+ * surface scaling behavior on a realistic large vault. Assertions are
+ * informational — we log p95 / mean / min / max but do not fail on a
+ * budget (PLAN has not set 5k budgets yet). A future PLAN update can
+ * promote any stable measurement into a hard budget.
+ */
+const perf5kEnabled = process.env.FOAM_PERF_5K === "1" || process.env.FOAM_PERF_5K === "true";
+
+let ctx5k: KeywordToolContext;
+
+describe.skipIf(!perf5kEnabled)("keyword p95 budgets on 5000-note vault (informational)", () => {
+  beforeAll(() => {
+    const vaultPath = getOrCreateSyntheticVault(5000);
+    ctx5k = { vaultPath, mocPattern: "*-MOC.md", ripgrepPath: rgPath };
+  });
+
+  it("search_notes (informational)", async () => {
+    const { p95, mean, samples } = await measureP95(() =>
+      searchNotes({ query: "topic-05", limit: 10 }, ctx5k),
+    );
+    const min = samples[0] ?? 0;
+    const max = samples[samples.length - 1] ?? 0;
+    console.error(
+      `search_notes 5k: p95=${p95.toFixed(1)}ms mean=${mean.toFixed(1)}ms min=${min.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+    );
+    expect(p95).toBeGreaterThan(0);
+  });
+
+  it("find_unchecked_tasks (informational)", async () => {
+    const { p95, mean, samples } = await measureP95(() => findUncheckedTasks({}, ctx5k));
+    const min = samples[0] ?? 0;
+    const max = samples[samples.length - 1] ?? 0;
+    console.error(
+      `find_unchecked_tasks 5k: p95=${p95.toFixed(1)}ms mean=${mean.toFixed(1)}ms min=${min.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+    );
+    expect(p95).toBeGreaterThan(0);
+  });
+
+  it("get_vault_stats (informational)", async () => {
+    const { p95, mean, samples } = await measureP95(() => getVaultStats({}, ctx5k));
+    const min = samples[0] ?? 0;
+    const max = samples[samples.length - 1] ?? 0;
+    console.error(
+      `get_vault_stats 5k: p95=${p95.toFixed(1)}ms mean=${mean.toFixed(1)}ms min=${min.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+    );
+    expect(p95).toBeGreaterThan(0);
+  });
+});

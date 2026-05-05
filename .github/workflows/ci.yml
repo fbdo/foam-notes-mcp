@@ -162,3 +162,39 @@ jobs:
 
       - name: Security scan (grype)
         run: grype dir:. --only-fixed --fail-on high
+
+  perf:
+    name: Perf benchmarks (main only)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, test, quality]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            dist
+          key: build-${{ github.sha }}-node22
+
+      - run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Hugging Face model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-model-Xenova-MiniLM-L6-v2-v1
+
+      - name: Run perf suite
+        run: npm run test:perf
+        env:
+          FOAM_SKIP_MODEL_DOWNLOAD: "false"
