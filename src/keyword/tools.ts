@@ -30,6 +30,30 @@ import {
 import { runRipgrep, type RgMatch } from "./ripgrep.js";
 
 // ---------------------------------------------------------------------------
+// Bounded-parallelism helper. Sequential file reads + parses pushed
+// `getVaultStats` p95 close to the 300ms budget on 500-note vaults; chunked
+// `Promise.all` brings it comfortably under budget while capping the number
+// of in-flight FDs. `Promise.all` preserves input order, so callers that
+// depend on iteration order (e.g. stable output lists) are unaffected.
+// ---------------------------------------------------------------------------
+
+const READ_CONCURRENCY = 32;
+
+async function processInChunks<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += concurrency) {
+    const chunk = items.slice(i, i + concurrency);
+    const chunkResults = await Promise.all(chunk.map(fn));
+    results.push(...chunkResults);
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Context passed into every tool. Wave C (`server.ts`) builds this once from
 // `loadConfig()` and passes it to each handler. Keeping it explicit (rather
 // than a hidden singleton) makes tests straightforward.
@@ -310,6 +334,14 @@ export const getVaultStats = async (
   const files = await listMarkdownFiles(ctx.vaultPath);
   const index = buildVaultIndex(files);
 
+  // Per-file read + parse runs in bounded-parallel chunks. Each task
+  // returns its partial contribution; merging is a single sequential pass
+  // over the results (which `Promise.all` returns in input order).
+  const perFile = await processInChunks(files, READ_CONCURRENCY, async (file) => {
+    const src = await readFile(file, "utf8");
+    return computeFileStats(file, src, index, ctx.vaultPath, ctx.mocPattern);
+  });
+
   const agg: MutableVaultStats = {
     noteCount: files.length,
     totalTags: 0,
@@ -322,14 +354,58 @@ export const getVaultStats = async (
   };
   const uniqueTags = new Set<string>();
 
-  for (const file of files) {
-    if (isMocFile(file, ctx.mocPattern)) agg.mocCount += 1;
-    const src = await readFile(file, "utf8");
-    aggregateNoteStats(src, index, ctx.vaultPath, agg, uniqueTags);
+  for (const fileStats of perFile) {
+    if (fileStats.isMoc) agg.mocCount += 1;
+    agg.totalTags += fileStats.totalTags;
+    for (const t of fileStats.tags) uniqueTags.add(t);
+    agg.taskCount += fileStats.taskCount;
+    agg.uncheckedTaskCount += fileStats.uncheckedTaskCount;
+    agg.wikilinkCount += fileStats.wikilinkCount;
+    agg.brokenWikilinkCount += fileStats.brokenWikilinkCount;
   }
 
   agg.uniqueTags = uniqueTags.size;
   return agg;
+};
+
+interface PerFileStats {
+  readonly isMoc: boolean;
+  readonly totalTags: number;
+  readonly tags: readonly string[];
+  readonly taskCount: number;
+  readonly uncheckedTaskCount: number;
+  readonly wikilinkCount: number;
+  readonly brokenWikilinkCount: number;
+}
+
+const computeFileStats = (
+  file: string,
+  src: string,
+  index: VaultIndex,
+  vaultPath: string,
+  mocPattern: string,
+): PerFileStats => {
+  const { data: fm } = safeParseFrontmatter(src);
+  const tags = extractTags(src, fm);
+  const tasks = extractTasks(src);
+  let uncheckedTaskCount = 0;
+  for (const task of tasks) if (!task.checked) uncheckedTaskCount += 1;
+  const wikilinks = extractWikilinks(src);
+  let brokenWikilinkCount = 0;
+  for (const wl of wikilinks) {
+    if (!isWikilinkResolvable(wl.target, vaultPath, index)) {
+      brokenWikilinkCount += 1;
+    }
+  }
+  return {
+    isMoc: isMocFile(file, mocPattern),
+    totalTags: tags.length,
+    tags,
+    taskCount: tasks.length,
+    uncheckedTaskCount,
+    wikilinkCount: wikilinks.length,
+    brokenWikilinkCount,
+  };
 };
 
 interface MutableVaultStats {
@@ -342,31 +418,6 @@ interface MutableVaultStats {
   brokenWikilinkCount: number;
   mocCount: number;
 }
-
-const aggregateNoteStats = (
-  src: string,
-  index: VaultIndex,
-  vaultPath: string,
-  agg: MutableVaultStats,
-  uniqueTags: Set<string>,
-): void => {
-  const { data: fm } = safeParseFrontmatter(src);
-  const tags = extractTags(src, fm);
-  agg.totalTags += tags.length;
-  for (const t of tags) uniqueTags.add(t);
-
-  const tasks = extractTasks(src);
-  agg.taskCount += tasks.length;
-  for (const task of tasks) if (!task.checked) agg.uncheckedTaskCount += 1;
-
-  const wikilinks = extractWikilinks(src);
-  agg.wikilinkCount += wikilinks.length;
-  for (const wl of wikilinks) {
-    if (!isWikilinkResolvable(wl.target, vaultPath, index)) {
-      agg.brokenWikilinkCount += 1;
-    }
-  }
-};
 
 const isWikilinkResolvable = (target: string, vaultPath: string, index: VaultIndex): boolean => {
   const resolved = resolveWikilink(target, index);
