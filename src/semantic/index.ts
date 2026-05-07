@@ -364,7 +364,7 @@ const indexOneNote = async (
   // source. Passing the body avoids the chunker treating a `---` YAML
   // delimiter as a thematic break and emitting a spurious chunk for a
   // metadata-only note.
-  const chunks = chunkNote(absPath, fm.content, { title, vaultIndex });
+  const chunks = chunkNote(absPath, fm.content, { title, vaultIndex, vaultPath });
 
   // Was this note previously indexed? If so this is an "update", otherwise "add".
   // A fingerprint of `""` is a sentinel written by the force-mode wipe —
