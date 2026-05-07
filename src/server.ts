@@ -45,7 +45,12 @@ import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import fg from "fast-glob";
 
 import { ensureNestedCacheDir } from "./cache.js";
-import { loadConfig, type FoamConfig } from "./config.js";
+import {
+  DEFAULT_GRAPH_MAX_BYTES,
+  DEFAULT_GRAPH_MAX_NODES,
+  loadConfig,
+  type FoamConfig,
+} from "./config.js";
 import { GraphResourceTooLargeError } from "./errors.js";
 import { buildGraph, type EdgeAttrs, type GraphNodeAttrs } from "./graph/builder.js";
 import { GRAPH_RESOURCE, GRAPH_RESOURCE_URI, readGraphResource } from "./resources/graph.js";
@@ -179,11 +184,6 @@ export interface BuildServerOptions {
   readonly graphResourceMaxBytes?: number;
 }
 
-/** Must match `DEFAULT_GRAPH_MAX_NODES` in `src/config.ts`. */
-const BUILD_SERVER_DEFAULT_MAX_NODES = 5000;
-/** Must match `DEFAULT_GRAPH_MAX_BYTES` in `src/config.ts`. */
-const BUILD_SERVER_DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
-
 /**
  * Construct a fully-configured `McpServer` with tool and resource
  * registrations. Does NOT connect to a transport — that is the caller's
@@ -191,8 +191,8 @@ const BUILD_SERVER_DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
  * server without any real I/O).
  */
 export const buildServer = (ctx: ToolContext, options: BuildServerOptions = {}): McpServer => {
-  const maxNodes = options.graphResourceMaxNodes ?? BUILD_SERVER_DEFAULT_MAX_NODES;
-  const maxBytes = options.graphResourceMaxBytes ?? BUILD_SERVER_DEFAULT_MAX_BYTES;
+  const maxNodes = options.graphResourceMaxNodes ?? DEFAULT_GRAPH_MAX_NODES;
+  const maxBytes = options.graphResourceMaxBytes ?? DEFAULT_GRAPH_MAX_BYTES;
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {}, resources: {} } },

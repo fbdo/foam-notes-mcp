@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   DEFAULT_OVERLAP_TOKENS,
@@ -12,6 +15,15 @@ const manyWords = (n: number): string =>
   Array.from({ length: n }, (_, i) => `w${i.toString()}`).join(" ");
 
 describe("chunker / chunkNote", () => {
+  const cleanup: (() => void)[] = [];
+
+  afterEach(() => {
+    while (cleanup.length > 0) {
+      const fn = cleanup.pop();
+      if (fn) fn();
+    }
+  });
+
   it("returns an empty array for an empty source", () => {
     expect(chunkNote("/v/a.md", "")).toEqual([]);
     expect(chunkNote("/v/a.md", "   \n\n  \t  ")).toEqual([]);
@@ -149,6 +161,42 @@ Beta body.
     const chunks = chunkNote("/v/n.md", src, { vaultIndex });
     const [c] = chunks;
     expect(c?.rawText).toContain("[[nonexistent]]");
+  });
+
+  it("substitutes [[folder]] via the directory-link fallback when vaultPath is supplied", () => {
+    // Build a real temp vault so `resolveDirectoryLink` (which normalizes
+    // via `path.resolve` and checks containment with `isInsideVault`) can
+    // actually hit `folder/index.md`.
+    const vaultPath = mkdtempSync(join(tmpdir(), "foam-chunker-dir-"));
+    cleanup.push(() => rmSync(vaultPath, { recursive: true, force: true }));
+    const folder = join(vaultPath, "folder");
+    mkdirSync(folder);
+    const indexPath = join(folder, "index.md");
+    writeFileSync(indexPath, "# Folder Index\n\nContent.", "utf8");
+    const notePath = join(vaultPath, "note.md");
+    writeFileSync(notePath, "see [[folder]]", "utf8");
+
+    const vaultIndex = buildVaultIndex([indexPath, notePath]);
+    const src = "# H\n\nLink to [[folder]].";
+    const chunks = chunkNote(notePath, src, { vaultIndex, vaultPath });
+    const [c] = chunks;
+    expect(c).toBeDefined();
+    if (c === undefined) return;
+    // Basename of the resolved index.md is "index" — so the substitution
+    // replaces `[[folder]]` with "index". Crucially, the raw `[[folder]]`
+    // token must NOT survive into the embedding stream.
+    expect(c.rawText).not.toContain("[[folder]]");
+    expect(c.rawText).toContain("index");
+  });
+
+  it("leaves [[folder]] verbatim when vaultPath is omitted", () => {
+    // Without `vaultPath` the directory-link fallback is opt-out, so the
+    // raw wikilink must survive.
+    const vaultIndex = buildVaultIndex(["/v/folder/index.md"]);
+    const src = "# H\n\nLink to [[folder]].";
+    const chunks = chunkNote("/v/n.md", src, { vaultIndex });
+    const [c] = chunks;
+    expect(c?.rawText).toContain("[[folder]]");
   });
 
   it("produces deterministic ids for identical inputs", () => {

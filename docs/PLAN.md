@@ -113,7 +113,6 @@ src/
 │
 ├── graph/
 │   ├── builder.ts         # build graphology DirectedGraph from parsed notes
-│   ├── store.ts           # load/save graph.json + placeholders.json
 │   ├── incremental.ts     # add/change/delete edge diffs
 │   ├── pagerank.ts        # power iteration, precomputed at build
 │   └── tools.ts           # 6 graph tools
@@ -202,7 +201,6 @@ Progress tracking. Check items only when done **and** verified. Each wave ends w
 ### Wave 3 — Graph layer (~4h)
 
 - [ ] `src/graph/builder.ts`
-- [ ] `src/graph/store.ts`
 - [ ] `src/graph/incremental.ts`
 - [ ] `src/graph/pagerank.ts`
 - [ ] `src/graph/tools.ts`
@@ -312,3 +310,4 @@ Append a short entry per wave when it completes. Keep it dense.
 - 2026-05-03 Wave 4 scope: amended Decision #10 to defer the three opt-in embedders (ollama/openai/bedrock) to v0.2. Added Decision #26 formalizing Wave 4A (local `transformers` only, fatal error on unknown `FOAM_EMBEDDER`). v0.1 embedder scope: single provider, stable interface, 384-dim MiniLM-L6-v2. Wave 4A implementation begins next commit.
 - 2026-05-04 Wave 3 review M3 addressed: foam://graph resource now enforces FOAM_GRAPH_MAX_NODES (default 5000) and FOAM_GRAPH_MAX_BYTES (default 10 MiB). GraphResourceTooLargeError is thrown on overflow and mapped to McpError(InvalidRequest) at the server boundary. Error messages point clients to the 6 graph tools for targeted queries. No new Locked Decision — implementation detail.
 - 2026-05-05 Wave 6 hardening: added scripts/check-write-boundary.sh (runs in the `quality` composite, wired as `quality:write-boundary`). Covers fs.writeFile/writeFileSync/appendFile/appendFileSync/mkdir/mkdirSync/rename/renameSync/unlink/unlinkSync/rm/rmSync — broader than PLAN's narrow grep (writeFile/rm only) to match Decision #23's full invariant. Allowlist: src/cache.ts + src/semantic/store.ts. Windows-rejection unit test already present in tests/config.test.ts (mutates `process.platform` via `Object.defineProperty` with restore in cleanup); verified it asserts on /does not support Windows/. Noted: server.ts calls `mkdirSync` (named import) to create the semantic cache subdirs; the spec's regex is prefix-anchored (`(fs|fsp|promises)\.…`) so it doesn't flag named-import calls. Both the check and the narrower PLAN intent are satisfied; tightening the regex to catch bare named imports would require either moving those calls into cache.ts or adding server.ts to the allowlist — deferred, flagged for Wave 6 review.
+- 2026-05-07 Wave 6 code-quality cleanups: three release-prep fixes from the code review. (M4) `src/semantic/chunker.ts::substituteWikilinks` now falls through to `resolveDirectoryLink` when the main resolver ladder returns zero candidates — mirrors `src/graph/builder.ts::resolveLinkTarget`. `ChunkOptions.vaultPath` added (optional) to thread the vault root through; `src/semantic/index.ts` was left untouched this commit (per task constraints), so production embeddings don't yet pass `vaultPath` — follow-up required to wire it in. (M1) `src/graph/store.ts` + `tests/graph/store.test.ts` deleted: the module's exports (saveGraph/loadGraph/computeVaultFingerprint/saveFingerprint/loadFingerprint) were never consumed by `server.ts::main()` — the graph is rebuilt from disk on every boot via `buildGraph()`. Cached graph persistence is now explicitly a v0.2 backlog item. Architecture diagram updated; Wave 3 checkbox removed. (L3) `DEFAULT_GRAPH_MAX_NODES` / `DEFAULT_GRAPH_MAX_BYTES` promoted to exports of `src/config.ts`; `src/server.ts` now imports them instead of duplicating with a "Must match config.ts" comment.

@@ -47,7 +47,7 @@ import { basename } from "node:path";
 import type { Heading, Nodes, Parent, Root, RootContent } from "mdast";
 
 import { parseMarkdown } from "./../parse/markdown.js";
-import { resolveWikilink, type VaultIndex } from "./../resolver.js";
+import { resolveDirectoryLink, resolveWikilink, type VaultIndex } from "./../resolver.js";
 
 /** Default window size (tokens) per PLAN Wave 4A. */
 export const DEFAULT_WINDOW_TOKENS = 200 as const;
@@ -85,6 +85,14 @@ export interface ChunkOptions {
   readonly title?: string | null;
   /** Optional vault index used to substitute wikilinks with resolved titles. */
   readonly vaultIndex?: VaultIndex;
+  /**
+   * Absolute path to the vault root. Required — alongside `vaultIndex` —
+   * to exercise the directory-link fallback (`[[folder]]` →
+   * `folder/index.md`) when a wikilink has no candidates via the main
+   * resolver ladder. Omit when directory-link substitution is not
+   * desired; raw `[[folder]]` will be left verbatim in that case.
+   */
+  readonly vaultPath?: string;
 }
 
 /**
@@ -116,7 +124,7 @@ export const chunkNote = (notePath: string, source: string, options?: ChunkOptio
       const chunkIndex = chunks.length;
       const rawBody = window.text;
       const substituted = options?.vaultIndex
-        ? substituteWikilinks(rawBody, options.vaultIndex)
+        ? substituteWikilinks(rawBody, options.vaultIndex, options.vaultPath)
         : rawBody;
       const text = prependTitle(substituted, options?.title);
       chunks.push({
@@ -313,12 +321,23 @@ const prependTitle = (body: string, title: string | null | undefined): string =>
  * note's display name (basename without `.md`). Unresolved wikilinks are
  * left verbatim so embedders still see something literal to learn from.
  *
+ * When the main ladder (`resolveWikilink`) returns no candidates, we fall
+ * through to `resolveDirectoryLink` — provided the caller supplied a
+ * `vaultPath` — so `[[folder]]` substitutes for `folder/index.md`'s
+ * basename. This mirrors the two-step resolution already performed by
+ * `src/graph/builder.ts::resolveLinkTarget`; without it, directory-link
+ * wikilinks leak raw `[[folder]]` tokens into the embedding stream.
+ *
  * We don't attempt to read frontmatter off the resolved file here (that
  * would require I/O and a vault-wide title lookup). The basename of the
  * resolved path is a cheap and reliable fallback that still beats leaving
  * the raw `[[slug]]` in the embedding stream.
  */
-const substituteWikilinks = (text: string, vaultIndex: VaultIndex): string => {
+const substituteWikilinks = (
+  text: string,
+  vaultIndex: VaultIndex,
+  vaultPath: string | undefined,
+): string => {
   // Linear-time; the body excludes `]` and `\n`.
   // eslint-disable-next-line sonarjs/slow-regex
   return text.replace(/\[\[([^\]\n]+?)\]\]/g, (match, body: string) => {
@@ -326,10 +345,21 @@ const substituteWikilinks = (text: string, vaultIndex: VaultIndex): string => {
     if (target === "") return match;
     const result = resolveWikilink(target, vaultIndex);
     const [firstCandidate] = result.candidates;
-    if (result.confidence === "none" || firstCandidate === undefined) return match;
-    const base = basename(firstCandidate);
-    return base.toLowerCase().endsWith(".md") ? base.slice(0, -3) : base;
+    if (firstCandidate !== undefined) return basenameToDisplay(firstCandidate);
+    // Main ladder returned nothing; try the directory-link fallback when
+    // the caller supplied a `vaultPath`. Mirrors graph/builder.ts.
+    if (vaultPath !== undefined) {
+      const dir = resolveDirectoryLink(target, vaultPath, vaultIndex);
+      if (dir !== undefined) return basenameToDisplay(dir);
+    }
+    return match;
   });
+};
+
+/** Strip a trailing `.md` (case-insensitive) from a basename for display. */
+const basenameToDisplay = (absPath: string): string => {
+  const base = basename(absPath);
+  return base.toLowerCase().endsWith(".md") ? base.slice(0, -3) : base;
 };
 
 /** Extract just the `target` from a wikilink body, dropping `#heading` and `|alias`. */

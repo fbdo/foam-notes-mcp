@@ -65,8 +65,20 @@ export interface FoamConfig {
 const DEFAULT_CACHE_DIR_REL = "./.foam-mcp/";
 const DEFAULT_MOC_PATTERN = "*-MOC.md";
 const DEFAULT_EMBEDDER: SupportedEmbedderProvider = "transformers";
-const DEFAULT_GRAPH_MAX_NODES = 5000;
-const DEFAULT_GRAPH_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB
+
+/**
+ * Default cap on the `foam://graph` resource node count. Exported so
+ * `src/server.ts` can fall back to the same value when callers omit
+ * `BuildServerOptions.graphResourceMaxNodes` — previously this was
+ * duplicated with a "Must match config.ts" comment.
+ */
+export const DEFAULT_GRAPH_MAX_NODES = 5000;
+
+/**
+ * Default cap on the `foam://graph` resource serialized byte length
+ * (10 MiB). Exported for the same reason as {@link DEFAULT_GRAPH_MAX_NODES}.
+ */
+export const DEFAULT_GRAPH_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
  * Load and validate configuration from environment variables.
