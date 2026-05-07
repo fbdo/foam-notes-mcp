@@ -219,6 +219,25 @@ export const findUncheckedTasks = async (
   input: FindUncheckedTasksInput,
   ctx: KeywordToolContext,
 ): Promise<TaskResult[]> => {
+  // H1 (Wave 6 security): `fast-glob` honors absolute patterns regardless of
+  // `cwd`, and `..` segments let a caller walk above the vault root. Content
+  // disclosure is blocked downstream by `isInsideVaultAsync`, but filesystem
+  // enumeration via timing remains possible. Reject both shapes up-front so
+  // we never hand an escape-capable pattern to fast-glob.
+  if (typeof input.pathGlob === "string") {
+    if (input.pathGlob.startsWith("/")) {
+      throw new ToolValidationError(
+        `find_unchecked_tasks: 'pathGlob' must be vault-relative; absolute patterns are rejected: ${input.pathGlob}`,
+      );
+    }
+    // Match a literal `..` path segment: start-of-string, `/`, or `\` on either
+    // side. We don't care about `..` inside a basename (e.g. `my..note.md`).
+    if (/(^|[\\/])\.\.([\\/]|$)/.test(input.pathGlob)) {
+      throw new ToolValidationError(
+        `find_unchecked_tasks: 'pathGlob' must not contain '..' segments: ${input.pathGlob}`,
+      );
+    }
+  }
   const pathGlob = typeof input.pathGlob === "string" ? input.pathGlob : "**/*.md";
   const headingFilter = typeof input.headingFilter === "string" ? input.headingFilter : undefined;
 
@@ -227,6 +246,7 @@ export const findUncheckedTasks = async (
     absolute: true,
     dot: false,
     onlyFiles: true,
+    followSymbolicLinks: false,
   });
 
   // If `pathGlob` matches nothing, skip ripgrep (ripgrep would exit with

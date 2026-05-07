@@ -442,7 +442,18 @@ const main = async (): Promise<void> => {
     process.exit(1);
   }
 
+  // M1 (Wave 6 security): a hung close step must not prevent exit. We wrap
+  // the close chain in a 5s deadline via `Promise.race`, and force-exit on
+  // a second SIGINT so an operator can always regain control with Ctrl-C.
+  let shuttingDown = false;
+  const SHUTDOWN_DEADLINE_MS = 5000;
+
   const shutdown = (signal: NodeJS.Signals): void => {
+    if (shuttingDown) {
+      console.error(`[${SERVER_NAME}] received ${signal} during shutdown, forcing exit`);
+      process.exit(130);
+    }
+    shuttingDown = true;
     console.error(`[${SERVER_NAME}] received ${signal}, shutting down`);
     // Best-effort: stop the watcher first so pending debounced events
     // flush cleanly and no new dispatches race with the store close.
@@ -473,9 +484,25 @@ const main = async (): Promise<void> => {
         logToStderr("error closing embedder", err);
       }
     };
-    closeAll().finally(() => {
-      process.exit(0);
+    const deadline = new Promise<"timeout">((resolvePromise) => {
+      setTimeout(() => {
+        resolvePromise("timeout");
+      }, SHUTDOWN_DEADLINE_MS).unref();
     });
+    Promise.race([closeAll().then(() => "ok" as const), deadline])
+      .then((outcome) => {
+        if (outcome === "timeout") {
+          console.error(
+            `[${SERVER_NAME}] shutdown deadline (${SHUTDOWN_DEADLINE_MS.toString()}ms) exceeded, forcing exit`,
+          );
+          process.exit(1);
+        }
+        process.exit(0);
+      })
+      .catch((err: unknown) => {
+        logToStderr("shutdown error", err);
+        process.exit(1);
+      });
   };
 
   process.on("SIGINT", shutdown);

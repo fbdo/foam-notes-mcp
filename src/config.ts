@@ -10,8 +10,8 @@
  * This module is a leaf: it must not import from any feature layer.
  */
 
-import { statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { isAbsolute, resolve, sep as pathSep } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 
 /**
@@ -79,6 +79,24 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): FoamConfig => 
 
   const vaultPath = resolveVaultPath(env.FOAM_VAULT_PATH);
   const cacheDir = resolveCacheDir(env.FOAM_CACHE_DIR);
+  // M3 (Wave 6 security): the cache dir must not overlap the vault in either
+  // direction. A cache inside the vault makes the watcher re-fire on every
+  // cache write (livelock risk + cache files surface as notes); a vault
+  // inside the cache would let vault writes clobber cache state. Both are
+  // config footguns; fail fast.
+  {
+    const vaultR = resolve(vaultPath);
+    const cacheR = resolve(cacheDir);
+    if (
+      cacheR === vaultR ||
+      cacheR.startsWith(vaultR + pathSep) ||
+      vaultR.startsWith(cacheR + pathSep)
+    ) {
+      throw new Error(
+        `FOAM_CACHE_DIR must not overlap FOAM_VAULT_PATH (cache=${cacheR}, vault=${vaultR})`,
+      );
+    }
+  }
   const mocPattern = resolveMocPattern(env.VAULT_MOC_PATTERN);
   const ripgrepPath = verifyRipgrep();
   const embedder = resolveEmbedder(env.FOAM_EMBEDDER);
@@ -131,7 +149,20 @@ const resolveVaultPath = (raw: string | undefined): string => {
   if (!stat.isDirectory()) {
     throw new Error(`FOAM_VAULT_PATH is not a directory: ${vaultPath}`);
   }
-  return vaultPath;
+  // M2 (Wave 6 security): canonicalize the vault path via realpath so that
+  // symlink-based escapes (e.g. a symlinked vault root pointing elsewhere)
+  // are resolved once, up-front. Downstream `isInsideVaultAsync` compares
+  // against this canonical path, so without this step a well-placed symlink
+  // could let callers walk outside the intended vault tree.
+  try {
+    return realpathSync(vaultPath);
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "ENOENT") {
+      throw new Error(`FOAM_VAULT_PATH does not exist: ${vaultPath}`);
+    }
+    throw err;
+  }
 };
 
 const resolveCacheDir = (raw: string | undefined): string => {

@@ -12,6 +12,7 @@ import {
   _resetVaultIndexCache,
   type KeywordToolContext,
 } from "../../src/keyword/tools.js";
+import { ToolValidationError } from "../../src/errors.js";
 import { fixtureRoot } from "../helpers/fixture.js";
 
 const VAULT = fixtureRoot(import.meta.url);
@@ -125,6 +126,36 @@ describe("find_unchecked_tasks (contract)", () => {
     const tasks = await findUncheckedTasks({ pathGlob: "02-Areas/**/*.md" }, ctx);
     expect(tasks.length).toBe(1);
     expect(tasks[0]?.path).toMatch(/02-Areas\/note-a\.md$/);
+  });
+
+  // H1 (Wave 6 security): reject pathGlob shapes that could escape the vault.
+  // fast-glob honors absolute patterns regardless of `cwd`, and `..` segments
+  // walk above the vault root. `isInsideVaultAsync` blocks content disclosure
+  // downstream, but filesystem enumeration via timing remains possible.
+  it("rejects absolute pathGlob (starts with '/')", async () => {
+    await expect(findUncheckedTasks({ pathGlob: "/etc/**/*.md" }, ctx)).rejects.toThrow(
+      ToolValidationError,
+    );
+    await expect(findUncheckedTasks({ pathGlob: "/etc/**/*.md" }, ctx)).rejects.toThrow(
+      /absolute patterns are rejected/,
+    );
+  });
+
+  it("rejects pathGlob containing '..' segments", async () => {
+    await expect(findUncheckedTasks({ pathGlob: "../**/*.md" }, ctx)).rejects.toThrow(
+      ToolValidationError,
+    );
+    await expect(findUncheckedTasks({ pathGlob: "01-Projects/../../*.md" }, ctx)).rejects.toThrow(
+      /'\.\.' segments/,
+    );
+  });
+
+  it("accepts a well-formed relative pathGlob (positive control)", async () => {
+    const tasks = await findUncheckedTasks({ pathGlob: "01-Projects/*.md" }, ctx);
+    // project-x.md has 2 unchecked tasks by inspection; no other .md files
+    // directly under 01-Projects contribute unchecked tasks.
+    expect(tasks.length).toBe(2);
+    expect(tasks.every((t) => /01-Projects\/project-x\.md$/.test(t.path))).toBe(true);
   });
 });
 

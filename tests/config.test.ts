@@ -1,10 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep as pathSep } from "node:path";
 import { loadConfig } from "../src/config.js";
 
-const makeTempDir = (): string => mkdtempSync(join(tmpdir(), "foam-cfg-"));
+const makeTempDir = (): string => realpathSync(mkdtempSync(join(tmpdir(), "foam-cfg-")));
 
 describe("loadConfig", () => {
   const cleanup: (() => void)[] = [];
@@ -50,8 +50,12 @@ describe("loadConfig", () => {
 
   it("honors FOAM_CACHE_DIR when set", () => {
     const dir = makeTempDir();
-    const cacheOverride = join(dir, "my-cache");
+    // Cache must be disjoint from the vault (M3, Wave 6): place it in a
+    // sibling temp dir so the overlap check is satisfied.
+    const cacheParent = makeTempDir();
+    const cacheOverride = join(cacheParent, "my-cache");
     cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    cleanup.push(() => rmSync(cacheParent, { recursive: true, force: true }));
     const cfg = loadConfig({
       FOAM_VAULT_PATH: dir,
       FOAM_CACHE_DIR: cacheOverride,
@@ -212,5 +216,121 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_GRAPH_MAX_BYTES: "1.5" })).toThrow(
       /FOAM_GRAPH_MAX_BYTES='1.5' is not a valid positive integer/,
     );
+  });
+});
+
+// M2 (Wave 6 security): FOAM_VAULT_PATH is canonicalized via fs.realpathSync
+// at load, so symlink-based escapes are resolved once up-front. Downstream
+// `isInsideVaultAsync` compares against the canonical path; without this
+// step a well-placed symlink could let callers walk outside the intended
+// vault tree.
+describe("loadConfig: vault path canonicalization (M2)", () => {
+  const cleanup: (() => void)[] = [];
+  afterEach(() => {
+    while (cleanup.length > 0) {
+      const fn = cleanup.pop();
+      if (fn) fn();
+    }
+  });
+
+  it("resolves a symlinked vault to the canonical target", () => {
+    const realTarget = makeTempDir();
+    const parent = makeTempDir();
+    const symlinkPath = join(parent, "vault-link");
+    symlinkSync(realTarget, symlinkPath, "dir");
+    cleanup.push(() => rmSync(realTarget, { recursive: true, force: true }));
+    cleanup.push(() => rmSync(parent, { recursive: true, force: true }));
+
+    const cfg = loadConfig({ FOAM_VAULT_PATH: symlinkPath });
+    expect(cfg.vaultPath).toBe(realTarget);
+    expect(cfg.vaultPath).not.toBe(symlinkPath);
+  });
+
+  it("throws with a clear message when the vault does not exist", () => {
+    const missing = join(tmpdir(), "definitely-not-a-real-path-m2-" + Date.now().toString());
+    expect(() => loadConfig({ FOAM_VAULT_PATH: missing })).toThrow(/does not exist/);
+  });
+
+  it("still accepts a relative path resolved against cwd (backward compat)", () => {
+    // A relative path like "." resolves to cwd. The canonicalized output
+    // must equal realpath(cwd). We override FOAM_CACHE_DIR to a disjoint
+    // temp dir so the M3 overlap check doesn't trip on the default
+    // `<cwd>/.foam-mcp` cache landing inside the vault (= cwd).
+    const cache = makeTempDir();
+    cleanup.push(() => rmSync(cache, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: ".", FOAM_CACHE_DIR: cache });
+    expect(cfg.vaultPath).toBe(realpathSync(process.cwd()));
+  });
+});
+
+// M3 (Wave 6 security): FOAM_CACHE_DIR and FOAM_VAULT_PATH must not overlap.
+// A cache inside the vault makes the watcher re-fire on cache writes
+// (livelock risk + cache files appear as notes); a vault inside the cache
+// would let vault writes clobber cache state. Both are config footguns.
+describe("loadConfig: cache/vault overlap rejection (M3)", () => {
+  const cleanup: (() => void)[] = [];
+  afterEach(() => {
+    while (cleanup.length > 0) {
+      const fn = cleanup.pop();
+      if (fn) fn();
+    }
+  });
+
+  it("throws when cache is inside the vault", () => {
+    const vault = makeTempDir();
+    cleanup.push(() => rmSync(vault, { recursive: true, force: true }));
+    expect(() =>
+      loadConfig({
+        FOAM_VAULT_PATH: vault,
+        FOAM_CACHE_DIR: join(vault, "cache"),
+      }),
+    ).toThrow(/FOAM_CACHE_DIR must not overlap FOAM_VAULT_PATH/);
+  });
+
+  it("throws when the vault is inside the cache", () => {
+    const cache = makeTempDir();
+    const vault = join(cache, "vault");
+    mkdirSync(vault);
+    cleanup.push(() => rmSync(cache, { recursive: true, force: true }));
+    expect(() =>
+      loadConfig({
+        FOAM_VAULT_PATH: vault,
+        FOAM_CACHE_DIR: cache,
+      }),
+    ).toThrow(/FOAM_CACHE_DIR must not overlap FOAM_VAULT_PATH/);
+  });
+
+  it("throws when cache and vault are the same directory", () => {
+    const dir = makeTempDir();
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    expect(() => loadConfig({ FOAM_VAULT_PATH: dir, FOAM_CACHE_DIR: dir })).toThrow(
+      /FOAM_CACHE_DIR must not overlap FOAM_VAULT_PATH/,
+    );
+  });
+
+  it("accepts disjoint vault and cache directories", () => {
+    const vault = makeTempDir();
+    const cacheParent = makeTempDir();
+    const cache = join(cacheParent, "my-cache");
+    cleanup.push(() => rmSync(vault, { recursive: true, force: true }));
+    cleanup.push(() => rmSync(cacheParent, { recursive: true, force: true }));
+    const cfg = loadConfig({ FOAM_VAULT_PATH: vault, FOAM_CACHE_DIR: cache });
+    expect(cfg.vaultPath).toBe(vault);
+    expect(cfg.cacheDir).toBe(cache);
+  });
+
+  it("accepts the default cache dir (./.foam-mcp) with a vault elsewhere", () => {
+    const vault = makeTempDir();
+    cleanup.push(() => rmSync(vault, { recursive: true, force: true }));
+    // Default cache resolves to `<cwd>/.foam-mcp`; under `npm test` cwd is the
+    // repo root, which is disjoint from a tmpdir-based vault.
+    const cfg = loadConfig({ FOAM_VAULT_PATH: vault });
+    expect(cfg.vaultPath).toBe(vault);
+    // Sanity: cache path ends with ".foam-mcp" (with or without trailing slash).
+    expect(/\.foam-mcp\/?$/.test(cfg.cacheDir)).toBe(true);
+    // And it must not overlap the vault.
+    expect(cfg.cacheDir.startsWith(vault + pathSep)).toBe(false);
+    expect(vault.startsWith(cfg.cacheDir + pathSep)).toBe(false);
+    expect(cfg.cacheDir).not.toBe(vault);
   });
 });
