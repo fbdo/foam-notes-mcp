@@ -26,9 +26,10 @@ import { extractWikilinks, type Wikilink } from "../parse/wikilink.js";
 import { deriveTitle, globToRegex, relativeFolder, safeParseFrontmatter } from "../path-util.js";
 import { type VaultIndex } from "../resolver.js";
 import {
+  collectAmbiguousLinks,
+  edgeAttrsFromLink,
   placeholderId,
   resolveLinkTarget,
-  type AmbiguousLinkEntry,
   type EdgeAttrs,
   type GraphNodeAttrs,
   type NoteNodeAttrs,
@@ -175,33 +176,6 @@ const handleAddOrModify = async (
   reconcileOutgoingEdges(graph, path, wikilinks, vaultPath, vaultIndex, diff);
 };
 
-/**
- * Walk a note's wikilinks and return the entries whose resolution is
- * ambiguous (≥ 2 candidates). Mirrors the collection logic in
- * `builder.ts`'s pass 2, kept here to keep `updateNote` self-contained and
- * to avoid exporting more than necessary from the builder.
- */
-const collectAmbiguousLinks = (
-  wikilinks: readonly Wikilink[],
-  vaultPath: string,
-  vaultIndex: VaultIndex,
-): AmbiguousLinkEntry[] => {
-  const out: AmbiguousLinkEntry[] = [];
-  for (const link of wikilinks) {
-    const resolution = resolveLinkTarget(link.target, vaultPath, vaultIndex);
-    if (resolution.kind !== "ambiguous") continue;
-    out.push({
-      target: link.target,
-      candidates: resolution.candidates,
-      line: link.line,
-      column: link.column,
-      ...(link.alias !== undefined ? { alias: link.alias } : {}),
-      ...(link.heading !== undefined ? { heading: link.heading } : {}),
-    });
-  }
-  return out;
-};
-
 const existingIsMoc = (
   graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
   path: string,
@@ -242,13 +216,7 @@ const computeDesiredEdges = (
     const targetId =
       resolution.kind === "resolved" ? resolution.target : placeholderId(resolution.target);
     if (desired.has(targetId)) continue;
-    const attrs: EdgeAttrs = {
-      line: link.line,
-      column: link.column,
-      ...(link.alias !== undefined ? { alias: link.alias } : {}),
-      ...(link.heading !== undefined ? { heading: link.heading } : {}),
-    };
-    desired.set(targetId, attrs);
+    desired.set(targetId, edgeAttrsFromLink(link));
   }
   return desired;
 };

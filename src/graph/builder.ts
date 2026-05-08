@@ -129,17 +129,17 @@ export const buildGraph = async (
   // ambiguous-link entries per note. We apply collected ambiguities to each
   // note node at the end so we can skip the field entirely when empty
   // (keeps the exported graph compact).
-  const ambiguousByNote = new Map<string, AmbiguousLinkEntry[]>();
   for (const note of parsed) {
     for (const link of note.wikilinks) {
-      addEdgeForLink(graph, note.path, link, vaultPath, vaultIndex, ambiguousByNote);
+      addEdgeForLink(graph, note.path, link, vaultPath, vaultIndex);
     }
-  }
-  for (const [notePath, entries] of ambiguousByNote) {
-    if (entries.length === 0) continue;
-    const prior = graph.getNodeAttributes(notePath);
-    if (prior.type !== "note") continue;
-    graph.replaceNodeAttributes(notePath, { ...prior, ambiguousLinks: entries });
+    const ambiguousLinks = collectAmbiguousLinks(note.wikilinks, vaultPath, vaultIndex);
+    if (ambiguousLinks.length > 0) {
+      const prior = graph.getNodeAttributes(note.path);
+      if (prior.type === "note") {
+        graph.replaceNodeAttributes(note.path, { ...prior, ambiguousLinks });
+      }
+    }
   }
 
   return graph;
@@ -180,14 +180,13 @@ const addEdgeForLink = (
   link: Wikilink,
   vaultPath: string,
   vaultIndex: VaultIndex,
-  ambiguousByNote: Map<string, AmbiguousLinkEntry[]>,
 ): void => {
   const resolution = resolveLinkTarget(link.target, vaultPath, vaultIndex);
   if (resolution.kind === "ambiguous") {
-    // Ambiguous → no edge, no placeholder; record on the source note's
-    // attributes instead (conflating ambiguity with broken-link semantics
-    // is exactly what this decision avoids).
-    recordAmbiguous(ambiguousByNote, sourcePath, link, resolution.candidates);
+    // Ambiguous → no edge, no placeholder; the pass-2 loop calls
+    // collectAmbiguousLinks separately to record the ambiguity on the
+    // source note's attributes (conflating ambiguity with broken-link
+    // semantics is exactly what this decision avoids).
     return;
   }
   const edgeAttrs = edgeAttrsFromLink(link);
@@ -211,31 +210,37 @@ const addEdgeForLink = (
 };
 
 /** Build an `EdgeAttrs` object from a raw wikilink. Omits optional fields. */
-const edgeAttrsFromLink = (link: Wikilink): EdgeAttrs => ({
+export const edgeAttrsFromLink = (link: Wikilink): EdgeAttrs => ({
   line: link.line,
   column: link.column,
   ...(link.alias !== undefined ? { alias: link.alias } : {}),
   ...(link.heading !== undefined ? { heading: link.heading } : {}),
 });
 
-/** Push an `AmbiguousLinkEntry` onto the per-note list, lazily creating it. */
-const recordAmbiguous = (
-  ambiguousByNote: Map<string, AmbiguousLinkEntry[]>,
-  sourcePath: string,
-  link: Wikilink,
-  candidates: readonly string[],
-): void => {
-  const entry: AmbiguousLinkEntry = {
-    target: link.target,
-    candidates,
-    line: link.line,
-    column: link.column,
-    ...(link.alias !== undefined ? { alias: link.alias } : {}),
-    ...(link.heading !== undefined ? { heading: link.heading } : {}),
-  };
-  const list = ambiguousByNote.get(sourcePath);
-  if (list) list.push(entry);
-  else ambiguousByNote.set(sourcePath, [entry]);
+/**
+ * Walk a note's wikilinks and return the entries whose resolution is
+ * ambiguous (≥ 2 candidates). Shared by the full builder (pass-2 loop) and
+ * the incremental updater ({@link updateNote}).
+ */
+export const collectAmbiguousLinks = (
+  wikilinks: readonly Wikilink[],
+  vaultPath: string,
+  vaultIndex: VaultIndex,
+): AmbiguousLinkEntry[] => {
+  const out: AmbiguousLinkEntry[] = [];
+  for (const link of wikilinks) {
+    const resolution = resolveLinkTarget(link.target, vaultPath, vaultIndex);
+    if (resolution.kind !== "ambiguous") continue;
+    out.push({
+      target: link.target,
+      candidates: resolution.candidates,
+      line: link.line,
+      column: link.column,
+      ...(link.alias !== undefined ? { alias: link.alias } : {}),
+      ...(link.heading !== undefined ? { heading: link.heading } : {}),
+    });
+  }
+  return out;
 };
 
 /**
