@@ -35,8 +35,9 @@
  *     dependency-cruiser).
  */
 
+import { realpathSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -522,14 +523,35 @@ const main = async (): Promise<void> => {
  * to being imported. `import.meta.url` is always a `file://` URL; when Node
  * runs a script, `process.argv[1]` is that script's filesystem path. The
  * standard ESM idiom is to convert argv[1] to a file URL and compare.
+ *
+ * Caveat (fixed here): when Node launches via a `.bin` symlink — the
+ * standard install path used by `npx`, `npm install -g`, and MCP clients
+ * (`command: npx`) — `process.argv[1]` is the symlink path itself, while
+ * `import.meta.url` is realpath-resolved by Node. A naive string compare
+ * always mismatches in that case, and `main()` is silently skipped (the
+ * process exits 0 with no output). Resolving argv[1] via `realpathSync`
+ * before comparing fixes every real-world invocation path.
  */
 const isDirectInvocation = (): boolean => {
   const entry = process.argv[1];
   if (!entry) return false;
   try {
-    return pathToFileURL(entry).href === import.meta.url;
+    // argv[1] may be a .bin symlink (npx, global install, MCP clients).
+    // Resolve to the real path before comparing to the module URL, which
+    // is always realpath-resolved by Node. Without this, the process
+    // exits 0 with no output under .bin invocation.
+    const argvReal = realpathSync(entry);
+    const moduleFile = fileURLToPath(import.meta.url);
+    return argvReal === moduleFile;
   } catch {
-    return false;
+    // If realpath fails (e.g., argv[1] doesn't exist), fall back to the
+    // previous URL comparison — correct for the common case where Node
+    // is invoked directly (no symlink) or the path already matches.
+    try {
+      return pathToFileURL(entry).href === import.meta.url;
+    } catch {
+      return false;
+    }
   }
 };
 

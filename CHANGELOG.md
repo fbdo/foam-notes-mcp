@@ -11,7 +11,33 @@ producing feedback; see `docs/PLAN.md` for the roadmap to v0.2 and v0.3.
 
 ## [Unreleased]
 
-None. Next release is v0.1.0 below.
+None. Next release is v0.1.2 below.
+
+## [0.1.2] - 2026-05-08
+
+### Fixed
+
+- `isDirectInvocation()` in `src/server.ts` now resolves `process.argv[1]`
+  via `realpathSync` before comparing to `import.meta.url`. Previously,
+  when Node was launched via a `.bin` symlink (the standard install
+  path used by `npx`, `npm install -g`, and MCP clients), the comparison
+  mismatched and `main()` was silently skipped — the server exited 0
+  with no output. This broke every real-world invocation path of
+  v0.1.0 and v0.1.1. Only raw `node /path/to/dist/server.js` worked.
+
+- Added `tests/integration/bin-symlink.test.ts`: CI-only regression
+  test that packs the repo, installs into a tmpdir, invokes via the
+  `.bin` symlink, and asserts the server boots and logs expected
+  startup output. This class of bug would have been caught in CI
+  before v0.1.0 if the test had existed.
+
+### Notes
+
+- v0.1.0 and v0.1.1 are both affected by this bug. v0.1.1 was
+  published manually and cannot be unpublished after 72 hours per
+  npm's unpublish policy; it will be deprecated via
+  `npm deprecate @fbdo/foam-notes-mcp@0.1.1 "broken bin entry, use >=0.1.2"`
+  once v0.1.2 is live.
 
 ## [0.1.1] - 2026-05-08
 
@@ -69,6 +95,7 @@ None. Next release is v0.1.0 below.
 
 > ⚠️ The v0.1.0 tag was created and CI ran successfully, but the `npm publish` step failed with a 404 on the unscoped package name. **0.1.0 was never published to npm**; 0.1.1 is the first successfully published release. The tag remains in the repository history as a marker for that attempt.
 
-[Unreleased]: https://github.com/fbdo/foam-notes-mcp/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/fbdo/foam-notes-mcp/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.0
