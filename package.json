@@ -1,6 +1,9 @@
 {
   "name": "foam-notes-mcp",
-  "version": "0.0.1",
+  "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Local-first MCP server for Foam-style Markdown vaults: keyword + graph + semantic search over wikilinks, backlinks, tasks, and frontmatter.",
   "type": "module",
   "main": "dist/server.js",
