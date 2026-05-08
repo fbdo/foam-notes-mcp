@@ -32,6 +32,7 @@ jobs:
       - run: npm ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ONNXRUNTIME_NODE_INSTALL: skip
 
       - run: npm run build
 

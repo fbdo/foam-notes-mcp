@@ -11,7 +11,26 @@ producing feedback; see `docs/PLAN.md` for the roadmap to v0.2 and v0.3.
 
 ## [Unreleased]
 
-None. Next release is v0.1.2 below.
+None. Next release is v0.1.3 below.
+
+## [0.1.3] - 2026-05-08
+
+### Fixed
+
+- CI reliability: added `ONNXRUNTIME_NODE_INSTALL=skip` env to every
+  `npm ci` step in both CI workflows. Previously, v0.1.2's publish
+  job failed when `onnxruntime-node`'s postinstall script timed out
+  trying to download the CUDA Execution Provider binary from
+  api.nuget.org on the linux/x64 runner. The CUDA EP is only used
+  for GPU inference (we don't use it); the CPU backend ships bundled
+  in the npm tarball. This change skips the CUDA-EP download on CI
+  runs only — end-user `npm install` is unaffected and retains default
+  behavior.
+
+### Notes
+
+- No runtime code changes. v0.1.3 is functionally identical to the
+  intended v0.1.2 release; only the CI workflow env changed.
 
 ## [0.1.2] - 2026-05-08
 
@@ -95,7 +114,8 @@ None. Next release is v0.1.2 below.
 
 > ⚠️ The v0.1.0 tag was created and CI ran successfully, but the `npm publish` step failed with a 404 on the unscoped package name. **0.1.0 was never published to npm**; 0.1.1 is the first successfully published release. The tag remains in the repository history as a marker for that attempt.
 
-[Unreleased]: https://github.com/fbdo/foam-notes-mcp/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/fbdo/foam-notes-mcp/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.0
