@@ -321,4 +321,4 @@ hatch when you want to verify a dependency bump before pushing.
 
 ## License
 
-[MIT](./LICENSE) © Fabio Lopes
+[MIT](./LICENSE) © Fabio Oliveira

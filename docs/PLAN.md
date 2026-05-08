@@ -164,7 +164,7 @@ Progress tracking. Check items only when done **and** verified. Each wave ends w
 - [x] `.editorconfig`
 - [x] `.gitignore` (includes `.foam-mcp/`, `dist/`, `node_modules/`, `coverage/`, `.DS_Store`, `*.tgz`)
 - [x] `.npmignore` (ships only `dist/`, `README.md`, `LICENSE`, `package.json`)
-- [x] `LICENSE` (MIT, holder `Fabio Lopes`)
+- [x] `LICENSE` (MIT, holder `Fabio Oliveira`)
 - [x] `README.md` stub (link to docs/PLAN.md; full README in Wave 7)
 - [x] `.husky/pre-commit` (`npx lint-staged`)
 - [x] `.husky/pre-push` (`npm run quality && npm test`)
