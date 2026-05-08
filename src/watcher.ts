@@ -221,12 +221,14 @@ export const createVaultWatcher = (ctx: WatcherContext): VaultWatcher => {
     // isolate each side so a throw on one doesn't starve the other.
     try {
       await updateNote(
-        ctx.graph,
-        ctx.vaultPath,
+        {
+          graph: ctx.graph,
+          vaultPath: ctx.vaultPath,
+          vaultIndex: ctx.vaultIndex,
+          mocPattern: ctx.mocPattern,
+        },
         change.path,
         toGraphChangeType(change.type),
-        ctx.vaultIndex,
-        ctx.mocPattern,
       );
     } catch (err) {
       ctx.onError?.(err, change);

@@ -191,13 +191,9 @@ export const buildIndex = async (
     const notePathRel = relPath(vaultPath, absPath);
     try {
       const outcome = await indexOneNote(
+        { vaultPath, embedder, store, batchSize, vaultIndex: options?.vaultIndex },
         absPath,
         fingerprint,
-        vaultPath,
-        embedder,
-        store,
-        batchSize,
-        options?.vaultIndex,
       );
       if (outcome === "added") state.added += 1;
       else if (outcome === "updated") state.updated += 1;
@@ -332,6 +328,22 @@ const planIncremental = async (
 type NoteOutcome = "added" | "updated" | "skipped";
 
 /**
+ * Stable context for {@link indexOneNote}.
+ *
+ * These values are constant within a single `buildIndex` or
+ * `updateNoteSemantic` invocation. Separating them from the per-note params
+ * (`absPath`, `fingerprint`) makes call sites less error-prone and mirrors
+ * the `UpdateNoteContext` pattern used in the graph layer.
+ */
+interface IndexNoteContext {
+  readonly vaultPath: string;
+  readonly embedder: Embedder;
+  readonly store: SemanticStore;
+  readonly batchSize: number;
+  readonly vaultIndex?: VaultIndex;
+}
+
+/**
  * Index a single note: parse, chunk, embed, upsert, record fingerprint.
  *
  * Shared by both the cold/incremental orchestrator ({@link buildIndex})
@@ -345,14 +357,11 @@ type NoteOutcome = "added" | "updated" | "skipped";
  *     is still recorded so subsequent incremental runs are no-op.
  */
 const indexOneNote = async (
+  ctx: IndexNoteContext,
   absPath: string,
   fingerprint: string,
-  vaultPath: string,
-  embedder: Embedder,
-  store: SemanticStore,
-  batchSize: number,
-  vaultIndex: VaultIndex | undefined,
 ): Promise<NoteOutcome> => {
+  const { vaultPath, embedder, store, batchSize, vaultIndex } = ctx;
   const source = await readFile(absPath, "utf8");
   const fm = parseFrontmatter(source);
   const title = deriveTitle(fm.data, basenameNoExt(absPath));
@@ -475,13 +484,9 @@ export const updateNoteSemantic = async (
   }
 
   return indexOneNote(
+    { vaultPath, embedder, store, batchSize, vaultIndex: opts?.vaultIndex },
     notePath,
     fingerprint,
-    vaultPath,
-    embedder,
-    store,
-    batchSize,
-    opts?.vaultIndex,
   );
 };
 

@@ -66,7 +66,11 @@ describe("graph/incremental updateNote", () => {
     unlinkSync(noteBPath);
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    const diff = await updateNote(graph, vault, noteBPath, "deleted", vaultIndex, "*-MOC.md");
+    const diff = await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "*-MOC.md" },
+      noteBPath,
+      "deleted",
+    );
 
     expect(graph.hasNode(noteBPath)).toBe(false);
     // The placeholder's only inbound edge came from note-b, so it should be
@@ -95,7 +99,11 @@ describe("graph/incremental updateNote", () => {
     );
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    const diff = await updateNote(graph, vault, newNotePath, "added", vaultIndex, "*-MOC.md");
+    const diff = await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "*-MOC.md" },
+      newNotePath,
+      "added",
+    );
 
     // New note is in the graph; placeholder is gone; edges redirected.
     expect(graph.hasNode(newNotePath)).toBe(true);
@@ -136,7 +144,11 @@ describe("graph/incremental updateNote", () => {
     writeFileSync(noteAPath, stripped, "utf8");
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    const diff = await updateNote(graph, vault, noteAPath, "modified", vaultIndex, "*-MOC.md");
+    const diff = await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "*-MOC.md" },
+      noteAPath,
+      "modified",
+    );
 
     expect(graph.hasEdge(noteAPath, noteBPath)).toBe(false);
     expect(diff.edgesRemoved).toBeGreaterThanOrEqual(1);
@@ -158,7 +170,11 @@ describe("graph/incremental updateNote", () => {
     writeFileSync(archivedPath, `${original}\n\nSee [[note-a]].\n`, "utf8");
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    const diff = await updateNote(graph, vault, archivedPath, "modified", vaultIndex, "*-MOC.md");
+    const diff = await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "*-MOC.md" },
+      archivedPath,
+      "modified",
+    );
 
     expect(graph.hasEdge(archivedPath, noteAPath)).toBe(true);
     expect(diff.edgesAdded).toBeGreaterThanOrEqual(1);
@@ -173,7 +189,11 @@ describe("graph/incremental updateNote", () => {
     writeFileSync(newMocPath, '---\ntitle: "Foo MOC"\n---\n# Foo MOC\n', "utf8");
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    await updateNote(graph, vault, newMocPath, "added", vaultIndex, "*-MOC.md");
+    await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "*-MOC.md" },
+      newMocPath,
+      "added",
+    );
 
     expect(graph.hasNode(newMocPath)).toBe(true);
     const attrs = graph.getNodeAttributes(newMocPath);
@@ -192,7 +212,11 @@ describe("graph/incremental updateNote", () => {
     writeFileSync(newNotePath, '---\ntitle: "Just A Note"\n---\n# Just A Note\n', "utf8");
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    await updateNote(graph, vault, newNotePath, "added", vaultIndex, "*-MOC.md");
+    await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "*-MOC.md" },
+      newNotePath,
+      "added",
+    );
 
     expect(graph.hasNode(newNotePath)).toBe(true);
     const attrs = graph.getNodeAttributes(newNotePath);
@@ -220,7 +244,11 @@ describe("graph/incremental updateNote", () => {
     writeFileSync(mocPath, '---\ntitle: "Index MOC (edited)"\n---\n# Index MOC\n', "utf8");
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    await updateNote(graph, vault, mocPath, "modified", vaultIndex, "never-matches-xyz.md");
+    await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "never-matches-xyz.md" },
+      mocPath,
+      "modified",
+    );
 
     const after = graph.getNodeAttributes(mocPath);
     expect(after.type).toBe("note");
@@ -283,7 +311,11 @@ describe("graph/incremental updateNote — ambiguous wikilinks (M2)", () => {
     writeFileSync(linksPath, "---\ntitle: Links\n---\n# Links\n\n- [[other]]\n", "utf8");
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    await updateNote(graph, vault, linksPath, "modified", vaultIndex, "*-MOC.md");
+    await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "*-MOC.md" },
+      linksPath,
+      "modified",
+    );
 
     const after = graph.getNodeAttributes(linksPath);
     expect(after.type).toBe("note");
@@ -310,7 +342,11 @@ describe("graph/incremental updateNote — ambiguous wikilinks (M2)", () => {
     writeFileSync(linksPath, "---\ntitle: Links\n---\n# Links\n\n- [[foo]]\n- [[other]]\n", "utf8");
     const vaultIndex = buildVaultIndex(await listVaultFiles(vault));
 
-    await updateNote(graph, vault, linksPath, "modified", vaultIndex, "*-MOC.md");
+    await updateNote(
+      { graph, vaultPath: vault, vaultIndex, mocPattern: "*-MOC.md" },
+      linksPath,
+      "modified",
+    );
 
     const fooAPath = resolvePath(vault, "a/foo.md");
     const fooBPath = resolvePath(vault, "b/foo.md");

@@ -46,6 +46,21 @@ export interface IncrementalDiff {
 /** The kind of filesystem event that triggered the update. */
 export type ChangeType = "added" | "modified" | "deleted";
 
+/**
+ * Stable per-watcher context for {@link updateNote}.
+ *
+ * These values are constant across all calls from a single watcher session
+ * (i.e. they describe the vault, not the individual file change). Separating
+ * them from the per-call params (`changedPath`, `changeType`) makes call
+ * sites more readable and reduces the surface of argument-order mistakes.
+ */
+export interface UpdateNoteContext {
+  readonly graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>;
+  readonly vaultPath: string;
+  readonly vaultIndex: VaultIndex;
+  readonly mocPattern: string;
+}
+
 /** Canonical prefix for placeholder node ids. */
 const PLACEHOLDER_PREFIX = "placeholder:";
 
@@ -58,19 +73,21 @@ const PLACEHOLDER_PREFIX = "placeholder:";
  * w.r.t. filesystem semantics — it reacts to whatever the caller has
  * committed, rather than racing the filesystem itself.
  *
- * @param mocPattern Glob pattern identifying MOC notes (e.g. `*-MOC.md`).
- *   Used to set `isMoc` on newly added nodes. Modifications preserve the
- *   existing flag — consistent with the builder, which only evaluates the
- *   pattern on the initial scan.
+ * @param ctx  Stable per-watcher context (graph, vault path, index, MOC pattern).
+ * @param changedPath  Absolute path of the file that changed.
+ * @param changeType   Kind of filesystem event.
+ *
+ * The `mocPattern` inside `ctx` is a glob identifying MOC notes (e.g.
+ * `*-MOC.md`). It is used to set `isMoc` on newly added nodes; modifications
+ * preserve the existing flag — consistent with the builder, which only
+ * evaluates the pattern on the initial scan.
  */
 export const updateNote = async (
-  graph: DirectedGraph<GraphNodeAttrs, EdgeAttrs>,
-  vaultPath: string,
+  ctx: UpdateNoteContext,
   changedPath: string,
   changeType: ChangeType,
-  vaultIndex: VaultIndex,
-  mocPattern: string,
 ): Promise<IncrementalDiff> => {
+  const { graph, vaultPath, vaultIndex, mocPattern } = ctx;
   const diff: IncrementalDiff = {
     edgesAdded: 0,
     edgesRemoved: 0,
