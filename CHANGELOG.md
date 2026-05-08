@@ -33,7 +33,7 @@ None. Next release is v0.1.0 below.
 - Size caps on `foam://graph` resource (`FOAM_GRAPH_MAX_NODES`, `FOAM_GRAPH_MAX_BYTES`).
 - Write-boundary audit (`scripts/check-write-boundary.sh`) wired as a `quality:write-boundary` gate.
 - MCP Inspector smoke test harness (`scripts/inspector-smoke.sh`, `npm run smoke:inspector`) for local pre-release verification.
-- Perf harness with p95 budgets on a 500-note synthetic vault (keyword <300ms, graph <100ms, semantic <300ms, first-build <60s).
+- Perf harness with p95 budgets on a 500-note synthetic vault (search_notes <300ms; find_unchecked_tasks <600ms; get_vault_stats <700ms; graph <100ms; semantic <300ms; first-build <60s). Budgets for find_unchecked_tasks and get_vault_stats calibrated for GitHub-hosted ubuntu runners.
 - Opt-in 5k-note perf scenario (`FOAM_PERF_5K=1`).
 - CI perf job gated to main-branch push.
 - Full v0.1 documentation: `README.md`, `docs/ARCHITECTURE.md`, `docs/TOOLS.md`, `docs/CONFIG.md`.
