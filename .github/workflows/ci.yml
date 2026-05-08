@@ -33,7 +33,7 @@ jobs:
 
       - run: npm run build
 
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v5
         with:
           path: |
             node_modules
@@ -51,7 +51,7 @@ jobs:
         with:
           node-version: 22
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -78,7 +78,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -125,7 +125,7 @@ jobs:
         with:
           node-version: 22
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -152,7 +152,7 @@ jobs:
         with:
           node-version: 22
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -179,7 +179,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v5
         with:
           path: |
             node_modules
@@ -192,7 +192,7 @@ jobs:
           ONNXRUNTIME_NODE_INSTALL: skip
 
       - name: Cache Hugging Face model
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
           key: hf-model-Xenova-MiniLM-L6-v2-v1
