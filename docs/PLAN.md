@@ -241,23 +241,23 @@ Progress tracking. Check items only when done **and** verified. Each wave ends w
 
 - [ ] `tests/perf.test.ts` (tagged `--run perf`): p95 budgets on 500-note generated vault — keyword <300ms, graph <100ms, semantic <300ms; first-build <60s
 - [ ] 5k-note scaled perf scenario (opt-in, not in default CI)
-- [ ] CI job `perf` runs only on main branch push
-- [ ] Provider integration tests (skipped unless env var set): `FOAM_EMBEDDER=ollama`, `openai`, `bedrock`
+- [x] CI job `perf` runs only on main branch push
+- [~] Provider integration tests (skipped unless env var set): `FOAM_EMBEDDER=ollama`, `openai`, `bedrock` — deferred to v0.2 per amended Decision #10 + Decision #26
 - [ ] MCP Inspector smoke test as a CI step (`scripts/inspector-smoke.sh`)
-- [ ] Grep-based acceptance check: no `fs.writeFile` / `fs.rm` in `src/` outside `src/cache.ts`
-- [ ] Windows-rejection unit test (mock `process.platform`)
-- [ ] Code-reviewer pass
-- [ ] Security-reviewer pass
-- [ ] Fix any blockers surfaced
+- [x] Grep-based acceptance check: no `fs.writeFile` / `fs.rm` in `src/` outside `src/cache.ts`
+- [x] Windows-rejection unit test (mock `process.platform`)
+- [x] Code-reviewer pass
+- [x] Security-reviewer pass
+- [x] Fix any blockers surfaced
 - [ ] Verify: all CI jobs green on a PR; perf budgets met
 
 ### Wave 7 — Release (~1–2h)
 
-- [ ] Full `README.md`: install, config env vars, all 16 tools + resource documented with examples, MCP client setup snippets (Kiro, Claude Desktop, Cursor), tuning guide, trust boundary doc, how to use Ollama/OpenAI/Bedrock
-- [ ] `CHANGELOG.md` with v0.1.0 notes
-- [ ] `docs/ARCHITECTURE.md` (layered diagram + invariants)
-- [ ] `docs/TOOLS.md` (per-tool contract reference, input/output schemas, examples)
-- [ ] `docs/CONFIG.md` (env var reference)
+- [x] Full `README.md`: install, config env vars, all 16 tools + resource documented with examples, MCP client setup snippets (Kiro, Claude Desktop, Cursor), tuning guide, trust boundary doc, how to use Ollama/OpenAI/Bedrock
+- [x] `CHANGELOG.md` with v0.1.0 notes
+- [x] `docs/ARCHITECTURE.md` (layered diagram + invariants)
+- [x] `docs/TOOLS.md` (per-tool contract reference, input/output schemas, examples)
+- [x] `docs/CONFIG.md` (env var reference)
 - [ ] User: create npm package placeholder `foam-notes-mcp`
 - [ ] User: configure npm trusted-publisher for `fbdo/foam-notes-mcp` workflow `publish.yml` environment `npm`
 - [ ] User: create GitHub Environment `npm` with required-reviewer if desired
@@ -311,3 +311,4 @@ Append a short entry per wave when it completes. Keep it dense.
 - 2026-05-04 Wave 3 review M3 addressed: foam://graph resource now enforces FOAM_GRAPH_MAX_NODES (default 5000) and FOAM_GRAPH_MAX_BYTES (default 10 MiB). GraphResourceTooLargeError is thrown on overflow and mapped to McpError(InvalidRequest) at the server boundary. Error messages point clients to the 6 graph tools for targeted queries. No new Locked Decision — implementation detail.
 - 2026-05-05 Wave 6 hardening: added scripts/check-write-boundary.sh (runs in the `quality` composite, wired as `quality:write-boundary`). Covers fs.writeFile/writeFileSync/appendFile/appendFileSync/mkdir/mkdirSync/rename/renameSync/unlink/unlinkSync/rm/rmSync — broader than PLAN's narrow grep (writeFile/rm only) to match Decision #23's full invariant. Allowlist: src/cache.ts + src/semantic/store.ts. Windows-rejection unit test already present in tests/config.test.ts (mutates `process.platform` via `Object.defineProperty` with restore in cleanup); verified it asserts on /does not support Windows/. Noted: server.ts calls `mkdirSync` (named import) to create the semantic cache subdirs; the spec's regex is prefix-anchored (`(fs|fsp|promises)\.…`) so it doesn't flag named-import calls. Both the check and the narrower PLAN intent are satisfied; tightening the regex to catch bare named imports would require either moving those calls into cache.ts or adding server.ts to the allowlist — deferred, flagged for Wave 6 review.
 - 2026-05-07 Wave 6 code-quality cleanups: three release-prep fixes from the code review. (M4) `src/semantic/chunker.ts::substituteWikilinks` now falls through to `resolveDirectoryLink` when the main resolver ladder returns zero candidates — mirrors `src/graph/builder.ts::resolveLinkTarget`. `ChunkOptions.vaultPath` added (optional) to thread the vault root through; `src/semantic/index.ts` was left untouched this commit (per task constraints), so production embeddings don't yet pass `vaultPath` — follow-up required to wire it in. (M1) `src/graph/store.ts` + `tests/graph/store.test.ts` deleted: the module's exports (saveGraph/loadGraph/computeVaultFingerprint/saveFingerprint/loadFingerprint) were never consumed by `server.ts::main()` — the graph is rebuilt from disk on every boot via `buildGraph()`. Cached graph persistence is now explicitly a v0.2 backlog item. Architecture diagram updated; Wave 3 checkbox removed. (L3) `DEFAULT_GRAPH_MAX_NODES` / `DEFAULT_GRAPH_MAX_BYTES` promoted to exports of `src/config.ts`; `src/server.ts` now imports them instead of duplicating with a "Must match config.ts" comment.
+- 2026-05-08 Wave 7 documentation sweep: README.md (f11070e, 324 lines), docs/ARCHITECTURE.md (3d8c522, 366 lines), docs/TOOLS.md (47617ba, 1192 lines), docs/CONFIG.md (5a55211, 388 lines) shipped. CHANGELOG.md added in this commit with Keep-a-Changelog format, v0.1.0 scope documented (16 tools + foam://graph, semantic via MiniLM + sqlite-vec, watcher, hybrid RRF+PageRank rerank, perf budgets, security hardening). PLAN checkboxes for Wave 1/6/7 items ticked where shipped; the "MCP Inspector smoke test as a CI step" box stays open (script + `npm run smoke:inspector` exist, but neither `.github/workflows/ci.yml` nor `publish.yml` invokes it — deferred). "All CI jobs green on a PR" and Wave 1's "initial CI run green" also stay open, pending the user's push to main. Next: commit 6 bumps package.json to 0.1.0 + adds publishConfig; then tag v0.1.0 + push triggers the OIDC-provenanced npm publish (PLAN Decision #8).
