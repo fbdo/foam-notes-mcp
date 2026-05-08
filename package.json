@@ -33,7 +33,7 @@
     "graph",
     "semantic-search"
   ],
-  "author": "Fabio Lopes",
+  "author": "Fabio Oliveira",
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
