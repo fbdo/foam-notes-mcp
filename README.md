@@ -49,9 +49,9 @@ after a one-time embedding-model download.
 ## Installation
 
 ```bash
-npm install -g foam-notes-mcp
+npm install -g @fbdo/foam-notes-mcp
 # or invoke on demand:
-npx -y foam-notes-mcp
+npx -y @fbdo/foam-notes-mcp
 ```
 
 Requirements:
@@ -94,7 +94,7 @@ does not run on Windows — see [Trust boundary](#trust-boundary)):
   "mcpServers": {
     "foam-notes": {
       "command": "npx",
-      "args": ["-y", "foam-notes-mcp"],
+      "args": ["-y", "@fbdo/foam-notes-mcp"],
       "env": {
         "FOAM_VAULT_PATH": "/Users/you/notes"
       }
@@ -115,7 +115,7 @@ of your workspace (project scope):
   "mcpServers": {
     "foam-notes": {
       "command": "npx",
-      "args": ["-y", "foam-notes-mcp"],
+      "args": ["-y", "@fbdo/foam-notes-mcp"],
       "env": {
         "FOAM_VAULT_PATH": "/Users/you/notes"
       }
@@ -137,7 +137,7 @@ Any client that can launch an MCP server over stdio will work. The
 minimum invocation is:
 
 ```bash
-FOAM_VAULT_PATH=/Users/you/notes npx -y foam-notes-mcp
+FOAM_VAULT_PATH=/Users/you/notes npx -y @fbdo/foam-notes-mcp
 ```
 
 ## Tools

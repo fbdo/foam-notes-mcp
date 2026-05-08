@@ -3,7 +3,7 @@
 > Durable plan. Progress is tracked via the checkboxes below. Check a box only when the item is _done and verified_. This file is the single source of truth for resumability across sessions.
 
 **Repository**: https://github.com/fbdo/foam-notes-mcp  
-**npm package**: `foam-notes-mcp`  
+**npm package**: `@fbdo/foam-notes-mcp`  
 **License**: MIT  
 **Maintainer**: @fbdo
 
@@ -258,12 +258,12 @@ Progress tracking. Check items only when done **and** verified. Each wave ends w
 - [x] `docs/ARCHITECTURE.md` (layered diagram + invariants)
 - [x] `docs/TOOLS.md` (per-tool contract reference, input/output schemas, examples)
 - [x] `docs/CONFIG.md` (env var reference)
-- [ ] User: create npm package placeholder `foam-notes-mcp`
-- [ ] User: configure npm trusted-publisher for `fbdo/foam-notes-mcp` workflow `publish.yml` environment `npm`
-- [ ] User: create GitHub Environment `npm` with required-reviewer if desired
-- [ ] Bump `package.json` version to `0.1.0`
+- [x] User: create npm package placeholder `foam-notes-mcp` — superseded 2026-05-08: pivoted to scoped `@fbdo/foam-notes-mcp`; scoped packages claim the name on first publish via trusted publisher, no placeholder required.
+- [x] User: configure npm trusted-publisher for `fbdo/foam-notes-mcp` workflow `publish.yml` environment `npm`
+- [x] User: create GitHub Environment `npm` with required-reviewer if desired
+- [x] Bump `package.json` version to `0.1.0` — bumped to `0.1.1` on 2026-05-08 after the unscoped-publish pivot.
 - [ ] Tag `v0.1.0` and push; publish workflow runs; release created; npm package live
-- [ ] Verify: `npm view foam-notes-mcp@0.1.0` shows correct metadata; `npx -y foam-notes-mcp` works on a clean machine
+- [ ] Verify: `npm view @fbdo/foam-notes-mcp@0.1.1` shows correct metadata; `npx -y @fbdo/foam-notes-mcp` works on a clean machine
 
 ---
 
@@ -313,3 +313,4 @@ Append a short entry per wave when it completes. Keep it dense.
 - 2026-05-07 Wave 6 code-quality cleanups: three release-prep fixes from the code review. (M4) `src/semantic/chunker.ts::substituteWikilinks` now falls through to `resolveDirectoryLink` when the main resolver ladder returns zero candidates — mirrors `src/graph/builder.ts::resolveLinkTarget`. `ChunkOptions.vaultPath` added (optional) to thread the vault root through; `src/semantic/index.ts` was left untouched this commit (per task constraints), so production embeddings don't yet pass `vaultPath` — follow-up required to wire it in. (M1) `src/graph/store.ts` + `tests/graph/store.test.ts` deleted: the module's exports (saveGraph/loadGraph/computeVaultFingerprint/saveFingerprint/loadFingerprint) were never consumed by `server.ts::main()` — the graph is rebuilt from disk on every boot via `buildGraph()`. Cached graph persistence is now explicitly a v0.2 backlog item. Architecture diagram updated; Wave 3 checkbox removed. (L3) `DEFAULT_GRAPH_MAX_NODES` / `DEFAULT_GRAPH_MAX_BYTES` promoted to exports of `src/config.ts`; `src/server.ts` now imports them instead of duplicating with a "Must match config.ts" comment.
 - 2026-05-08 Wave 7 documentation sweep: README.md (f11070e, 324 lines), docs/ARCHITECTURE.md (3d8c522, 366 lines), docs/TOOLS.md (47617ba, 1192 lines), docs/CONFIG.md (5a55211, 388 lines) shipped. CHANGELOG.md added in this commit with Keep-a-Changelog format, v0.1.0 scope documented (16 tools + foam://graph, semantic via MiniLM + sqlite-vec, watcher, hybrid RRF+PageRank rerank, perf budgets, security hardening). PLAN checkboxes for Wave 1/6/7 items ticked where shipped; the "MCP Inspector smoke test as a CI step" box stays open (script + `npm run smoke:inspector` exist, but neither `.github/workflows/ci.yml` nor `publish.yml` invokes it — deferred). "All CI jobs green on a PR" and Wave 1's "initial CI run green" also stay open, pending the user's push to main. Next: commit 6 bumps package.json to 0.1.0 + adds publishConfig; then tag v0.1.0 + push triggers the OIDC-provenanced npm publish (PLAN Decision #8).
 - 2026-05-08 Perf budget calibration: first main-branch CI perf run showed find_unchecked_tasks=454ms, get_vault_stats=580ms p95 on GitHub-hosted ubuntu runners vs ~240ms local on Apple Silicon. Parse is CPU-bound and single-threaded; parallelization + ripgrep pre-filter (commits d0e9320, 92dbb57) close most of the I/O gap but can't close the runner-hardware gap. Budgets relaxed to 600ms (find_unchecked_tasks) and 700ms (get_vault_stats) with headroom; search_notes, graph, and semantic budgets unchanged. A 2-3x regression would still trip the gate — the perf harness continues to catch real regressions.
+- 2026-05-08 Release pivot: published as scoped `@fbdo/foam-notes-mcp` instead of unscoped `foam-notes-mcp`. The v0.1.0 tag attempted an unscoped publish and hit npm 404 (package did not exist). Scoped packages under an owned scope can claim the name on first publish via trusted publisher (same pattern as `@fbdo/smart-agentic-calendar`). Package.json renamed + bumped to 0.1.1; README + CONFIG + CHANGELOG updated. v0.1.0 tag on origin is preserved as a historical marker; CHANGELOG notes it never published to npm.

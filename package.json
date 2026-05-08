@@ -1,6 +1,6 @@
 {
-  "name": "foam-notes-mcp",
-  "version": "0.1.0",
+  "name": "@fbdo/foam-notes-mcp",
+  "version": "0.1.1",
   "publishConfig": {
     "access": "public"
   },

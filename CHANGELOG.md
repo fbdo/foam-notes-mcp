@@ -13,6 +13,16 @@ producing feedback; see `docs/PLAN.md` for the roadmap to v0.2 and v0.3.
 
 None. Next release is v0.1.0 below.
 
+## [0.1.1] - 2026-05-08
+
+### Changed
+
+- Published as scoped package `@fbdo/foam-notes-mcp` (was unscoped `foam-notes-mcp` in the 0.1.0 attempt).
+
+### Notes
+
+- This is functionally identical to the 0.1.0 commit (9667a7c). The rename and version bump were required because the 0.1.0 publish attempt hit an npm 404 on the unscoped name (the package didn't exist on npm). The scoped name is claimed on first publish via trusted publisher, matching the pattern used by other @fbdo packages. No runtime or behavior changes.
+
 ## [0.1.0] - 2026-05-08
 
 ### Added
@@ -57,5 +67,8 @@ None. Next release is v0.1.0 below.
 - Provider integration test suite (network-gated).
 - Personalized PageRank for hybrid rerank.
 
-[Unreleased]: https://github.com/fbdo/foam-notes-mcp/compare/v0.1.0...HEAD
+> ⚠️ The v0.1.0 tag was created and CI ran successfully, but the `npm publish` step failed with a 404 on the unscoped package name. **0.1.0 was never published to npm**; 0.1.1 is the first successfully published release. The tag remains in the repository history as a marker for that attempt.
+
+[Unreleased]: https://github.com/fbdo/foam-notes-mcp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fbdo/foam-notes-mcp/releases/tag/v0.1.0

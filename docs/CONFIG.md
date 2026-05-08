@@ -335,7 +335,7 @@ The "positive integer" parser rejects `0`, negative values, floats
 ### Minimal
 
 ```bash
-FOAM_VAULT_PATH=/Users/you/notes npx -y foam-notes-mcp
+FOAM_VAULT_PATH=/Users/you/notes npx -y @fbdo/foam-notes-mcp
 ```
 
 ### Explicit cache location, watcher off
@@ -344,7 +344,7 @@ FOAM_VAULT_PATH=/Users/you/notes npx -y foam-notes-mcp
 FOAM_VAULT_PATH=/Users/you/notes \
 FOAM_CACHE_DIR=/Users/you/.cache/foam-notes \
 FOAM_WATCHER=0 \
-npx -y foam-notes-mcp
+npx -y @fbdo/foam-notes-mcp
 ```
 
 ### Large-vault tuning
@@ -353,7 +353,7 @@ npx -y foam-notes-mcp
 FOAM_VAULT_PATH=/Users/you/notes \
 FOAM_GRAPH_MAX_NODES=20000 \
 FOAM_GRAPH_MAX_BYTES=52428800 \
-npx -y foam-notes-mcp
+npx -y @fbdo/foam-notes-mcp
 ```
 
 ### MCP client (Claude Desktop)
@@ -363,7 +363,7 @@ npx -y foam-notes-mcp
   "mcpServers": {
     "foam-notes": {
       "command": "npx",
-      "args": ["-y", "foam-notes-mcp"],
+      "args": ["-y", "@fbdo/foam-notes-mcp"],
       "env": {
         "FOAM_VAULT_PATH": "/Users/you/notes"
       }
