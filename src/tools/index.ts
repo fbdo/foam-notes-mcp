@@ -121,7 +121,7 @@ export const TOOL_METADATA = {
   },
   resolve_wikilink: {
     description:
-      "Resolve a wikilink target (e.g. `note-a`, `02-Areas/note-b`) against the vault. Returns `unique`, `ambiguous`, or `not_found` with the matching candidate path(s).",
+      "Resolve a wikilink target (e.g. `note-a`, `02-Areas/note-b`) to its canonical vault-relative path. Returns `unique`, `ambiguous`, or `not_found` with the matching candidate path(s). Call this first to get the full path needed by graph tools (list_backlinks, neighbors, shortest_path) and get_note.",
   },
   get_note: {
     description:
@@ -133,15 +133,15 @@ export const TOOL_METADATA = {
   },
   list_backlinks: {
     description:
-      "List every inbound note→note link to the given note, with source path, line, and a one-line context snippet.",
+      "List every inbound note→note link to the given note, with source path, line, and a one-line context snippet. The `note` parameter must be a vault-relative path ending in `.md` (e.g. `folder/note-a.md`). Use `resolve_wikilink` first if you only have a bare name.",
   },
   neighbors: {
     description:
-      "Return notes within `depth` hops of the given note along the chosen direction (`out`, `in`, or `both`). Distance is reported per neighbor.",
+      "Return notes within `depth` hops of the given note along the chosen direction (`out`, `in`, or `both`). Distance is reported per neighbor. The `note` parameter must be a vault-relative path ending in `.md` (e.g. `folder/note-a.md`). Use `resolve_wikilink` first if you only have a bare name.",
   },
   shortest_path: {
     description:
-      "Find the shortest directed path (note→note) between two notes. Returns the path and hop count, or nulls when no path exists within `max_hops`.",
+      "Find the shortest directed path (note→note) between two notes. Returns the path and hop count, or nulls when no path exists within `max_hops`. The `from` and `to` parameters must be vault-relative paths ending in `.md` (e.g. `folder/note-a.md`). Use `resolve_wikilink` first if you only have bare names.",
   },
   orphans: {
     description:
@@ -225,6 +225,9 @@ export const TOOL_HANDLERS: {
   hybrid_search: (input, ctx) => hybridSearch(input, ctx.hybrid),
 } as const;
 
+const NOTE_PATH_DESC =
+  "Vault-relative path to the note including .md extension (e.g. 'projects/my-note.md'). Use resolve_wikilink to convert a bare name to a path.";
+
 /**
  * Zod raw shapes for each tool's input schema. Single source of truth for
  * schema shape: `McpServer.registerTool` consumes these directly and
@@ -241,9 +244,14 @@ export const TOOL_HANDLERS: {
  */
 export const TOOL_ZOD_SHAPES = {
   search_notes: {
-    query: z.string().min(1),
-    limit: z.number().int().min(0).optional(),
-    contextLines: z.number().int().min(0).optional(),
+    query: z.string().min(1).describe("Text pattern to search for (ripgrep syntax)."),
+    limit: z.number().int().min(0).optional().describe("Maximum number of matches to return."),
+    contextLines: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Number of surrounding context lines per match."),
   },
   find_by_frontmatter: {
     key: z.string().min(1),
@@ -255,25 +263,33 @@ export const TOOL_ZOD_SHAPES = {
     headingFilter: z.string().optional(),
   },
   resolve_wikilink: {
-    target: z.string().min(1),
+    target: z
+      .string()
+      .min(1)
+      .describe(
+        "Wikilink target to resolve — accepts bare names (e.g. 'my-note'), paths ('folder/my-note'), or names with .md extension. Returns the canonical vault path.",
+      ),
   },
   get_note: {
-    path: z.string().min(1),
-    includeBody: z.boolean().optional(),
+    path: z.string().min(1).describe(NOTE_PATH_DESC),
+    includeBody: z.boolean().optional().describe("If true, include the markdown body content."),
   },
   get_vault_stats: {},
   list_backlinks: {
-    note: z.string().min(1),
+    note: z.string().min(1).describe(NOTE_PATH_DESC),
   },
   neighbors: {
-    note: z.string().min(1),
-    depth: z.number().int().min(1).max(3).optional(),
-    direction: z.enum(["out", "in", "both"]).optional(),
+    note: z.string().min(1).describe(NOTE_PATH_DESC),
+    depth: z.number().int().min(1).max(3).optional().describe("BFS traversal depth (1-3)."),
+    direction: z
+      .enum(["out", "in", "both"])
+      .optional()
+      .describe("Edge direction: 'out' (links from note), 'in' (links to note), or 'both'."),
   },
   shortest_path: {
-    from: z.string().min(1),
-    to: z.string().min(1),
-    max_hops: z.number().int().min(1).optional(),
+    from: z.string().min(1).describe(NOTE_PATH_DESC),
+    to: z.string().min(1).describe(NOTE_PATH_DESC),
+    max_hops: z.number().int().min(1).optional().describe("Maximum path length (default 6)."),
   },
   orphans: {},
   placeholders: {},
