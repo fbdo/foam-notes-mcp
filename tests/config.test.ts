@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep as pathSep } from "node:path";
+import { join, resolve } from "node:path";
 import { loadConfig } from "../src/config.js";
 
 const makeTempDir = (): string => realpathSync(mkdtempSync(join(tmpdir(), "foam-cfg-")));
@@ -319,18 +319,11 @@ describe("loadConfig: cache/vault overlap rejection (M3)", () => {
     expect(cfg.cacheDir).toBe(cache);
   });
 
-  it("accepts the default cache dir (./.foam-mcp) with a vault elsewhere", () => {
+  it("places default cache dir (.foam-mcp) inside the vault", () => {
     const vault = makeTempDir();
     cleanup.push(() => rmSync(vault, { recursive: true, force: true }));
-    // Default cache resolves to `<cwd>/.foam-mcp`; under `npm test` cwd is the
-    // repo root, which is disjoint from a tmpdir-based vault.
     const cfg = loadConfig({ FOAM_VAULT_PATH: vault });
     expect(cfg.vaultPath).toBe(vault);
-    // Sanity: cache path ends with ".foam-mcp" (with or without trailing slash).
-    expect(/\.foam-mcp\/?$/.test(cfg.cacheDir)).toBe(true);
-    // And it must not overlap the vault.
-    expect(cfg.cacheDir.startsWith(vault + pathSep)).toBe(false);
-    expect(vault.startsWith(cfg.cacheDir + pathSep)).toBe(false);
-    expect(cfg.cacheDir).not.toBe(vault);
+    expect(cfg.cacheDir).toBe(resolve(vault, ".foam-mcp"));
   });
 });

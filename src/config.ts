@@ -11,7 +11,7 @@
  */
 
 import { realpathSync, statSync } from "node:fs";
-import { isAbsolute, resolve, sep as pathSep } from "node:path";
+import { basename, isAbsolute, resolve, sep as pathSep } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 
 /**
@@ -62,7 +62,7 @@ export interface FoamConfig {
   readonly graphResourceMaxBytes: number;
 }
 
-const DEFAULT_CACHE_DIR_REL = "./.foam-mcp/";
+const DEFAULT_CACHE_DIRNAME = ".foam-mcp";
 const DEFAULT_MOC_PATTERN = "*-MOC.md";
 const DEFAULT_EMBEDDER: SupportedEmbedderProvider = "transformers";
 
@@ -90,19 +90,22 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): FoamConfig => 
   rejectWindows();
 
   const vaultPath = resolveVaultPath(env.FOAM_VAULT_PATH);
-  const cacheDir = resolveCacheDir(env.FOAM_CACHE_DIR);
-  // M3 (Wave 6 security): the cache dir must not overlap the vault in either
-  // direction. A cache inside the vault makes the watcher re-fire on every
-  // cache write (livelock risk + cache files surface as notes); a vault
-  // inside the cache would let vault writes clobber cache state. Both are
-  // config footguns; fail fast.
+  const cacheDir = resolveCacheDir(env.FOAM_CACHE_DIR, vaultPath);
+  // M3 (Wave 6 security): the cache dir must not overlap the vault in a way
+  // that causes the watcher to livelock or vault writes to clobber cache.
+  // The default `.foam-mcp` dotdir inside the vault is safe: the watcher
+  // only indexes `.md` files and the graph builder skips hidden directories.
+  // User-specified cache dirs that overlap the vault are still rejected.
   {
     const vaultR = resolve(vaultPath);
     const cacheR = resolve(cacheDir);
+    const isDefaultInsideVault =
+      cacheR === resolve(vaultR, DEFAULT_CACHE_DIRNAME) && basename(cacheR).startsWith(".");
     if (
-      cacheR === vaultR ||
-      cacheR.startsWith(vaultR + pathSep) ||
-      vaultR.startsWith(cacheR + pathSep)
+      !isDefaultInsideVault &&
+      (cacheR === vaultR ||
+        cacheR.startsWith(vaultR + pathSep) ||
+        vaultR.startsWith(cacheR + pathSep))
     ) {
       throw new Error(
         `FOAM_CACHE_DIR must not overlap FOAM_VAULT_PATH (cache=${cacheR}, vault=${vaultR})`,
@@ -177,9 +180,14 @@ const resolveVaultPath = (raw: string | undefined): string => {
   }
 };
 
-const resolveCacheDir = (raw: string | undefined): string => {
-  const useRaw = raw && raw.trim() !== "" ? raw : DEFAULT_CACHE_DIR_REL;
-  return isAbsolute(useRaw) ? useRaw : resolve(process.cwd(), useRaw);
+const resolveCacheDir = (raw: string | undefined, vaultPath: string): string => {
+  if (raw && raw.trim() !== "") {
+    return isAbsolute(raw) ? raw : resolve(process.cwd(), raw);
+  }
+  // Default: place cache inside the vault as a hidden directory. IDEs often
+  // launch MCP servers with cwd=/ which would resolve a relative default to
+  // the filesystem root. The vault itself is always known and writable.
+  return resolve(vaultPath, DEFAULT_CACHE_DIRNAME);
 };
 
 const resolveMocPattern = (raw: string | undefined): string =>
